@@ -1,12 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  Smartphone, Wifi, Usb, Radio, Circle, Square, Mic, Volume2, Headphones, Camera, Layers, ChevronLeft, Search,
+  MonitorPlay, House, Sparkles, Zap, Gamepad2, Smartphone, Wifi, Usb, Radio, Circle, Square, Mic, Volume2, Headphones, Camera, Layers, ChevronLeft, Search,
   AppWindow, ShieldCheck, ExternalLink, Info, X, Eye, EyeOff, RefreshCw, MousePointerClick, FolderOpen
 } from 'lucide-react'
 import { Engine } from './engine'
 import Panel from './Panel'
 import Permissions from './Permissions'
 import { Logo, About, VERSION } from './Brand'
+import Library, { useMeta, AppIcon } from './Library'
+import Device from './Device'
+import Wireless from './Wireless'
+import { Home, Presets, Automation, ChatBox, Quick } from './Pages'
+import Keys from './Keys'
+import { KEYMAPS, Mapper, combo } from './keymap'
 import { PRESETS, patchLayer, newLayer } from './scene'
 import { Button, Segmented, Slider, Switch, Select, Input, Row, Section, cx } from './ui'
 
@@ -25,7 +31,8 @@ const DEF = {
 const firstScene = PRESETS['Phone · blurred backdrop']().scene
 DEF.scenes = [firstScene]; DEF.sceneId = firstScene.id
 DEF.control = false
-Object.assign(DEF, { autoSwitch: false, rules: [], fallbackScene: '', trans: 300 })
+Object.assign(DEF, { autoSwitch: false, rules: [], fallbackScene: '', trans: 300, autos: [], chatUrl: '', cover: false, micMute: false, phoneMute: false,
+  audioDup: true, keymaps: KEYMAPS, keymapId: 'bgmi', keymapOn: false, keymapAuto: true })
 
 // Selection outline for the layer being arranged (DOM overlay, so it never appears in the stream).
 function SelBox({ eng, canvas, id }) {
@@ -89,7 +96,6 @@ export default function App() {
   const [serial, setSerial] = useState('')
   const [apps, setApps] = useState(null)
   const [q, setQ] = useState('')
-  const [addr, setAddr] = useState('')
   const [cap, setCap] = useState('idle') // idle | starting | on
   const [live, setLive] = useState(null) // null | starting | on
   const [rec, setRec] = useState(null) // null | elapsed time
@@ -100,15 +106,19 @@ export default function App() {
   const [sel, setSel] = useState('')
   const [perm, setPerm] = useState(false)
   const [about, setAbout] = useState(false)
+  const [view, setView] = useState('home')
   const canvas = useRef(), eng = useRef(), down = useRef(false), drag = useRef(null)
   const s = saved || DEF
+  const sRef = useRef()
+  sRef.current = s
+  const [chat, setChat] = useState([]), [chatSt, setChatSt] = useState({})
   const set = p => setS(o => ({ ...o, ...p }))
   const fail = e => setNote({ text: clean(e), bad: true })
 
   useEffect(() => {
     const e = eng.current = window.__eng = new Engine(canvas.current)
     e.onError = fail
-    api.invoke('settings:get').then(v => { const n = { ...DEF, ...v }; if (!n.scenes?.length) n.scenes = DEF.scenes; if (!n.scenes.some(x => x.id === n.sceneId)) n.sceneId = n.scenes[0].id; setS(n) })
+    api.invoke('settings:get').then(v => { const n = { ...DEF, ...v }; if (!n.scenes?.length) n.scenes = DEF.scenes; n.keymaps = { ...KEYMAPS, ...v.keymaps }; if (!n.scenes.some(x => x.id === n.sceneId)) n.sceneId = n.scenes[0].id; setS(n) })
     const refresh = e.refreshMedia = async () => {
       const d = await navigator.mediaDevices.enumerateDevices()
       const pick = kind => d.filter(x => x.kind === kind && x.label && x.deviceId !== 'default').map(x => [x.deviceId, x.label])
@@ -122,12 +132,18 @@ export default function App() {
     const offs = [
       api.on('session:video', p => e.pushVideo(p)),
       api.on('session:audio', d => e.pushAudio(d)),
+      api.on('chat:msg', m => {
+        e.pushChat(m); setChat(c => [...c.slice(-199), m])
+        if (m.old) return
+        hot.current.fire(m.type, m)
+        if (m.type === 'chat') { hot.current.fire('command', m); hot.current.fire('keyword', m) }
+      }),
       api.on('session:log', l => /WARN|ERROR|unavailable/.test(l) && setNote({ text: l.replace(/^\[server\]\s*/, '') })),
       api.on('session:end', err => { e.clear(); setCap('idle'); if (err) setNote({ text: err, bad: true }) }),
       api.on('out:stats', (id, st) => { if (id === 'live') { setStats(st); setLive('on') } else setRec(st.time.slice(0, 8)) }),
       api.on('out:end', (id, r) => {
         e.stopOutput(id)
-        if (id === 'live') { setLive(null); setStats(null) } else setRec(null)
+        if (id === 'live') { setLive(null); setStats(null); hot.current.fire('end') } else setRec(null)
         if (r.error) setNote({ text: r.error, bad: true })
         else if (r.file) setNote({ text: 'Recording saved to Movies', file: r.file })
       })
@@ -147,17 +163,23 @@ export default function App() {
   const dev = devices.find(d => d.serial === serial)
   const ready = dev?.state === 'device'
   useEffect(() => { if (!dev) setSerial(devices.find(d => d.state === 'device')?.serial || devices[0]?.serial || '') }, [devices])
-  useEffect(() => { setApps(null); if (ready) api.invoke('apps', serial).then(setApps).catch(() => setApps([])) }, [serial, ready])
+  const loadApps = () => { setApps(null); if (ready) api.invoke('apps', serial).then(setApps).catch(() => setApps([])) }
+  useEffect(loadApps, [serial, ready])
+  const meta = useMeta(apps)
 
   // Watch which app is in front on the phone (drives "On phone now" and the privacy cover).
   useEffect(() => {
-    if (!ready || (s.mode !== 'app' && !s.autoSwitch)) return setFocus('')
-    let on = true
-    const tick = async () => { const f = await api.invoke('focus', serial).catch(() => ''); if (on && f) { eng.current.focus = f; setFocus(f) } }
+    if (!ready) return setFocus('')
+    let on = true, last = ''
+    const tick = async () => { // a change counts only after two identical reads, so transitions don't flicker
+      const f = await api.invoke('focus', serial).catch(() => '')
+      if (on && f && f === last) { eng.current.focus = f; setFocus(f) }
+      last = f
+    }
     tick()
-    const t = setInterval(tick, 1000)
+    const t = setInterval(tick, 600)
     return () => { on = false; clearInterval(t) }
-  }, [serial, ready, s.mode, s.autoSwitch])
+  }, [serial, ready])
 
   // Auto scene switching: follow the app in front on the phone.
   useEffect(() => {
@@ -169,7 +191,7 @@ export default function App() {
 
   // Hotkeys: Cmd/Ctrl+1..9 switch scenes, Cmd/Ctrl+R toggles recording.
   const hot = useRef()
-  hot.current = { record: () => record() } // lazy: record is declared further down
+  hot.current = { record: () => record(), fire: (...a) => fire(...a) } // lazy: both are declared further down
   useEffect(() => {
     const h = e => {
       if (!(e.metaKey || e.ctrlKey) || e.target.tagName === 'INPUT') return
@@ -187,7 +209,7 @@ export default function App() {
     setNote(null); setCap('starting')
     try {
       await api.invoke('session:start', serial, {
-        audio: o.phoneAudio, maxSize: +o.maxSize, fps: +o.capFps, bitrate: o.capBitrate,
+        audio: o.phoneAudio, dup: o.audioDup, maxSize: +o.maxSize, fps: +o.capFps, bitrate: o.capBitrate,
         virtual: isApp && o.appMode === 'virtual', display: o.vdisplay, pkg: isApp && !(o.appMode === 'guard' && focus === o.pkg) ? o.pkg : ''
       })
       setCap('on')
@@ -201,7 +223,7 @@ export default function App() {
     if (!s.key) return setNote({ text: 'Paste your stream key first — YouTube Studio → Go live → Stream.', bad: true })
     if (s.dest === 'custom' && !/^rtmps?:\/\//.test(s.customUrl)) return setNote({ text: 'Enter the RTMP server URL (rtmp://…).', bad: true })
     setNote(null); setLive('starting')
-    try { await eng.current.startOutput('live', { dest: s.dest, key: s.key.trim(), url: s.customUrl.trim(), bitrate: +s.bitrate, fps: +s.fps, encoder: s.encoder }) }
+    try { await eng.current.startOutput('live', { dest: s.dest, key: s.key.trim(), url: s.customUrl.trim(), bitrate: +s.bitrate, fps: +s.fps, encoder: s.encoder }); fire('live') }
     catch (e) { setLive(null); fail(e) }
   }
   const record = async () => {
@@ -210,15 +232,64 @@ export default function App() {
     try { await eng.current.startOutput('rec', {}) } catch (e) { setRec(null); fail(e) }
   }
 
+  // ---- automation: chat / stream triggers → alert, sound, scene ----
+  const act = (r, m = {}) => {
+    const fill = t => (t || '').replace('{name}', m.author || 'Someone').replace('{amount}', m.amount || '').replace('{text}', m.text || '')
+    if (r.alert) eng.current.showAlert(fill(r.alert), fill(r.sub))
+    if (r.sound) eng.current.playSound(r.sound).catch(fail)
+    if (r.scene && sRef.current.scenes.some(x => x.id === r.scene)) set({ sceneId: r.scene })
+  }
+  const fire = (on, m = {}) => {
+    for (const r of sRef.current.autos || []) {
+      if (!r.enabled || r.on !== on) continue
+      const t = (m.text || '').trim().toLowerCase(), arg = (r.arg || '').trim().toLowerCase()
+      if ((on === 'command' && !(arg && t.startsWith(arg))) || (on === 'keyword' && !(arg && t.includes(arg)))) continue
+      act(r, m)
+    }
+  }
+  const chatGo = async () => {
+    if (chatSt.on) { api.invoke('chat:stop'); return setChatSt({}) }
+    setChatSt({ busy: true })
+    try { setChatSt({ on: true, title: (await api.invoke('chat:start', s.chatUrl)).title }) } catch (e) { setChatSt({ err: clean(e) }) }
+  }
+  const applyPreset = name => { const r = PRESETS[name](); set({ scenes: [...s.scenes, r.scene], sceneId: r.scene.id, ...(live || rec ? {} : r.set) }); setSel(''); setView('studio') }
+  const onStream = pkg => { setView('studio'); if (cap === 'on' && s.mode === 'app' && s.appMode === 'guard') { set({ pkg }); api.send('ctl', { t: 'app', pkg }) } else source({ mode: 'app', pkg }) }
+  const qa = {
+    s, set, cap, live, rec, ready, start: () => start(), stop: () => api.invoke('session:stop'), goLive: () => goLive(), record: () => record(),
+    shot: () => api.invoke('device:shot', serial).then(file => setNote({ text: 'Screenshot saved to Pictures', file })).catch(fail)
+  }
+
   // ---- phone control from the preview ----
   const canCtl = cap === 'on' && s.control
+  // Game controls: keyboard + mouse → multi-touch through the active key map
+  const mapper = useRef()
+  mapper.current ??= new Mapper(m => api.send('ctl', m), () => { const f = eng.current?.frame; return f && { w: f.displayWidth, h: f.displayHeight } })
+  const km = s.keymaps[s.keymapId] || Object.values(s.keymaps)[0]
+  useEffect(() => { mapper.current.reset(); mapper.current.items = km.items }, [km])
+  useEffect(() => { // auto-pick the map that belongs to the game in front
+    if (s.keymapAuto === false || !focus) return
+    const k = Object.keys(s.keymaps).find(k => s.keymaps[k].pkg === focus)
+    if (k && k !== s.keymapId) set({ keymapId: k })
+  }, [focus, s.keymapAuto])
+  const game = canCtl && s.keymapOn
+  const locked = () => document.pointerLockElement === canvas.current
+  const gamePtr = {
+    onContextMenu: e => e.preventDefault(),
+    onPointerDown: e => { e.preventDefault(); canvas.current.focus(); if (!locked()) return canvas.current.requestPointerLock(); mapper.current.key(['MouseLeft', 'MouseMiddle', 'MouseRight'][e.button], true) },
+    onPointerUp: e => locked() && mapper.current.key(['MouseLeft', 'MouseMiddle', 'MouseRight'][e.button], false),
+    onPointerMove: e => locked() && mapper.current.look(e.movementX, e.movementY),
+    onWheel: e => locked() && mapper.current.pulse(e.deltaY < 0 ? 'WheelUp' : 'WheelDown'),
+    onKeyDown: e => { if (e.code === 'Escape' || e.metaKey) return; e.preventDefault(); if (!e.repeat) mapper.current.key(e.code, true, combo(e)) },
+    onKeyUp: e => { e.preventDefault(); mapper.current.key(e.code, false) },
+    onBlur: () => mapper.current.reset()
+  }
   const cpt = e => { const c = canvas.current, b = c.getBoundingClientRect(); return [((e.clientX - b.left) * c.width) / b.width, ((e.clientY - b.top) * c.height) / b.height] }
   const pos = e => canCtl ? eng.current.toPhone(...cpt(e), down.current) : null
   const upL = (id, p) => setS(o => ({ ...o, ...patchLayer(o, id, p) }))
   const layerOf = id => (s.scenes.find(x => x.id === s.sceneId) || s.scenes[0]).layers.find(l => l.id === id)
   const touch = (a, e) => { const p = pos(e); if (p) api.send('ctl', { t: 'touch', a, ...p }) }
   const key = code => api.send('ctl', { t: 'key', code })
-  const ptr = s.control ? {
+  const ptr = game ? gamePtr : s.control ? {
     onContextMenu: e => { e.preventDefault(); canCtl && key(4) },
     onPointerDown: e => { if (e.button || !pos(e)) return; e.currentTarget.setPointerCapture(e.pointerId); touch(0, e); down.current = true },
     onPointerMove: e => down.current && touch(2, e),
@@ -276,7 +347,7 @@ export default function App() {
       {/* title bar */}
       <header className={cx('drag h-11 shrink-0 flex items-center gap-3 border-b border-white/[0.06]', mac ? 'pl-[88px] pr-3' : 'pl-3 pr-[150px]')}>
         <button onClick={() => setAbout(true)} className="no-drag flex items-center gap-2 rounded-md pr-1.5 hover:bg-white/5" title="About Meroro">
-          <Logo size={22} /><span className="font-semibold tracking-tight">Meroro</span><span className="text-[11px] text-zinc-500">by Kartik Sabale</span>
+          <Logo size={24} /><span className="text-[16px] font-extrabold tracking-tight bg-gradient-to-r from-violet-300 via-fuchsia-300 to-pink-300 bg-clip-text text-transparent">Meroro</span><span className="text-[11px] text-zinc-500">by Kartik Sabale</span>
         </button>
         <div className="flex-1" />
         {live === 'on' && stats && (
@@ -285,7 +356,6 @@ export default function App() {
             <span className={stats.speed < 0.95 ? 'text-amber-400' : 'text-emerald-400'}>{stats.speed < 0.95 ? 'Encoder lagging' : 'Healthy'}</span>
           </div>
         )}
-        <Button variant="ghost" onClick={() => setPerm(true)}><ShieldCheck size={13} />Permissions</Button>
         {rec && <span className="flex items-center gap-1.5 text-[11px] tabular-nums text-zinc-300"><Circle size={8} className="fill-red-500 text-red-500 live-dot" />REC {rec}</span>}
         <span className={cx('h-6 px-2 rounded-md text-[11px] font-semibold inline-flex items-center gap-1.5 tabular-nums', live === 'on' ? 'bg-red-500 text-white' : 'bg-white/[0.06] text-zinc-400')}>
           {live === 'on' ? <><span className="size-1.5 rounded-full bg-white live-dot" />LIVE {stats?.time.slice(0, 8)}</> : live ? 'CONNECTING…' : 'OFFLINE'}
@@ -293,6 +363,26 @@ export default function App() {
       </header>
 
       <div className="flex-1 min-h-0 flex">
+        <nav className="w-[60px] shrink-0 flex flex-col items-center gap-1 py-3 border-r border-white/[0.06] bg-black/30">
+          {[['home', 'Home', House], ['studio', 'Studio', MonitorPlay], ['presets', 'Presets', Sparkles], ['auto', 'Auto', Zap], ['keys', 'Keys', Gamepad2], ['device', 'Device', Smartphone]].map(([v, t, I]) => (
+            <button key={v} onClick={() => setView(v)} title={t}
+              className={cx('w-12 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors', view === v ? 'bg-violet-500/20 text-white' : 'text-zinc-500 hover:text-zinc-200 hover:bg-white/5')}>
+              <I size={18} className={view === v ? 'text-violet-300' : ''} />{t}
+            </button>
+          ))}
+          <div className="flex-1" />
+          <button onClick={() => setPerm(true)} title="Permissions" className="w-12 h-12 rounded-xl grid place-items-center text-zinc-500 hover:text-zinc-200 hover:bg-white/5"><ShieldCheck size={18} /></button>
+          <button onClick={() => setAbout(true)} title="About" className="w-12 h-12 rounded-xl grid place-items-center hover:bg-white/5"><Logo size={22} /></button>
+        </nav>
+        {view === 'home' && <Home q={qa} dev={dev} front={apps?.find(a => a.pkg === focus)}
+          lib={{ apps, meta, serial, ready, focus, picked: s.mode === 'app' ? s.pkg : '', reload: loadApps, onStream }} />}
+        {view === 'presets' && <Presets apply={applyPreset} busy={busy} />}
+        {view === 'auto' && <Automation s={s} set={set} chatBox={<ChatBox tall s={s} set={set} chat={chat} st={chatSt} go={chatGo} />} stopSound={() => eng.current.stopSound()}
+          test={r => act(r, { author: 'Test viewer', amount: '₹100', text: 'Great stream!' })}
+          appRules={<Panel mode="auto" s={s} set={set} focus={focus} apps={apps} media={media} sel="" setSel={() => {}} />} />}
+        {view === 'keys' && <Keys s={s} set={set} eng={eng} focus={focus} apps={apps} />}
+        {view === 'device' && <Device devices={devices} serial={serial} setSerial={setSerial} ready={ready} focus={focus} apps={apps} meta={meta} onNote={setNote} />}
+        <div className={cx('flex-1 min-w-0 flex', view !== 'studio' && 'hidden')}>
         {/* left: device + source */}
         <aside className="w-[292px] shrink-0 border-r border-white/[0.06] overflow-y-auto bg-zinc-900/40">
           <Section icon={Smartphone} title="Devices" right={<RefreshCw size={12} className="text-zinc-600 animate-spin [animation-duration:3s]" />}>
@@ -313,10 +403,7 @@ export default function App() {
                 </div>
               </button>
             ))}
-            <div className="flex gap-1.5">
-              <Input value={addr} onChange={e => setAddr(e.target.value)} placeholder="Wi-Fi: 192.168.1.20:5555" />
-              <Button disabled={!addr} onClick={() => api.invoke('adb:connect', addr.trim()).then(r => setNote({ text: r.trim() })).catch(fail)}>Connect</Button>
-            </div>
+            <Wireless compact serial={serial} usbReady={ready && !dev?.wifi} />
           </Section>
 
           <Section icon={AppWindow} title="Source">
@@ -352,8 +439,7 @@ export default function App() {
                 {shown.map(a => (
                   <button key={a.pkg} onClick={() => pick(a.pkg)}
                     className={cx('w-full flex items-center gap-2 rounded-md px-1.5 py-1 text-left', a.pkg === s.pkg ? 'bg-violet-500/20' : 'hover:bg-white/5')}>
-                    <span className="size-6 shrink-0 rounded-md grid place-items-center text-[11px] font-bold text-white"
-                      style={{ background: `hsl(${[...a.pkg].reduce((h, c) => h + c.charCodeAt(0), 0) % 360} 55% 42%)` }}>{a.name[0].toUpperCase()}</span>
+                    <AppIcon app={a} meta={meta} size={24} />
                     <span className="min-w-0"><span className="block truncate text-[12px]">{a.name}</span><span className="block truncate text-[10px] text-zinc-500">{a.pkg}</span></span>
                   </button>
                 ))}
@@ -363,6 +449,8 @@ export default function App() {
             <Row label="Quality"><Select className="flex-1" value={s.maxSize} onChange={maxSize => source({ maxSize })} options={[[1920, '1080p'], [1280, '720p'], [0, 'Native resolution']]} /></Row>
             <Row label="Frame rate"><Select className="flex-1" value={s.capFps} onChange={capFps => source({ capFps })} options={[[60, '60 fps'], [30, '30 fps']]} /></Row>
             <Row label="Phone audio"><Switch checked={s.phoneAudio} onChange={phoneAudio => source({ phoneAudio })} /></Row>
+            {s.phoneAudio && <Row label="Sound plays"><Select className="flex-1" value={s.audioDup ? 'both' : 'pc'} onChange={v => source({ audioDup: v === 'both' })}
+              options={[['both', 'On phone + stream'], ['pc', 'Stream only (phone silent)']]} /></Row>}
             {cap === 'idle'
               ? <Button variant="primary" className="w-full h-8" disabled={!ready} onClick={() => start()}>Start capture</Button>
               : <Button className="w-full h-8" onClick={() => api.invoke('session:stop')}>{cap === 'starting' ? 'Connecting…' : 'Stop capture'}</Button>}
@@ -378,6 +466,7 @@ export default function App() {
           <div className="relative flex-1 min-h-0 bg-black/50">
             <canvas ref={canvas} tabIndex={0} {...ptr}
               className={cx('absolute inset-0 m-auto max-w-[calc(100%-32px)] max-h-[calc(100%-32px)] rounded-md ring-1 ring-white/10 shadow-2xl outline-none', canCtl ? 'cursor-pointer' : !s.control && 'cursor-move')} />
+            {game && <div className="absolute top-3 left-1/2 -translate-x-1/2 h-7 px-3 rounded-full bg-violet-500 text-white text-[12px] font-semibold flex items-center gap-1.5 pointer-events-none"><Gamepad2 size={13} />{km.name} controls on · click the preview to capture the mouse · Esc to release</div>}
             {!s.control && sel && <SelBox eng={eng} canvas={canvas} id={sel} />}
             {cap !== 'on' && !sel && (
               <div className="absolute inset-0 grid place-items-center pointer-events-none">
@@ -409,6 +498,8 @@ export default function App() {
             <MousePointerClick size={13} className="text-zinc-500" />
             <span className="text-[12px] text-zinc-400 mr-1">{s.control ? 'Control phone' : 'Arrange sources'}</span>
             <Switch checked={s.control} onChange={control => set({ control })} />
+            <span className="mx-2 h-4 w-px bg-white/10" />
+            <Quick compact q={qa} />
             <div className="flex-1" />
             {note && (
               <div className={cx('min-w-0 flex items-center gap-1.5 text-[12px]', note.bad ? 'text-red-400' : 'text-zinc-400')}>
@@ -436,7 +527,9 @@ export default function App() {
           </div>
         </main>
 
-        <Panel s={s} set={set} live={live} busy={busy} media={media} sel={sel} setSel={setSel} focus={focus} apps={apps} />
+        <Panel s={s} set={set} live={live} busy={busy} media={media} sel={sel} setSel={setSel} focus={focus} apps={apps} goPresets={() => setView('presets')}
+          chatBox={<ChatBox s={s} set={set} chat={chat} st={chatSt} go={chatGo} />} />
+        </div>
         {about && <About onClose={() => setAbout(false)} />}
         {perm && <Permissions devices={devices} onClose={() => { setPerm(false); eng.current.refreshMedia() }} addScreen={x => {
           const n = { ...newLayer('screen'), src: x.id, name: x.name }

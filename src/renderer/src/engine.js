@@ -38,6 +38,8 @@ export class Engine {
   recs = {}
   res = {} // per-layer media resources
   geo = {} // per-layer drawn geometry (canvas px), for hit-testing
+  chat = [] // recent YouTube chat messages
+  sounds = {}
   focus = ''
   ts = 0
 
@@ -53,6 +55,8 @@ export class Engine {
       gain.connect(an); gain.connect(this.dest)
       this.ch[k] = { gain, an, buf: new Float32Array(512) }
     }
+    this.fx = ac.createGain() // alert sounds / music: heard by you and by the stream
+    this.fx.connect(this.dest); this.fx.connect(ac.destination)
     this.monitor = ac.createGain()
     this.monitor.gain.value = 0
     this.ch.phone.gain.connect(this.monitor).connect(ac.destination)
@@ -80,8 +84,9 @@ export class Engine {
     if (s.fps !== this.s.fps || !this.timer) { clearInterval(this.timer); this.timer = setInterval(() => this.draw(), 1000 / s.fps) }
     const [w, h] = s.canvas.split('x').map(Number)
     if (this.canvas.width !== w || this.canvas.height !== h) { this.canvas.width = w; this.canvas.height = h }
-    this.ch.phone.gain.gain.value = s.phoneVol
-    this.ch.mic.gain.gain.value = s.micVol
+    this.ch.phone.gain.gain.value = s.phoneMute ? 0 : s.phoneVol
+    this.ch.mic.gain.gain.value = s.micMute ? 0 : s.micVol
+    this.fx.gain.value = s.fxVol ?? 0.8
     this.monitor.gain.value = s.monitor ? 1 : 0
     this.s = s
     this.sync()
@@ -112,7 +117,43 @@ export class Engine {
 
   clear() { this.frame?.close(); this.frame = null; this.rect = null; this.cfg = null; this.focus = '' }
 
-  get hidden() { return !!(this.s.guardPkg && this.focus && this.focus !== this.s.guardPkg) }
+  get hidden() { return !!(this.s.cover || (this.s.guardPkg && this.focus && this.focus !== this.s.guardPkg)) }
+  get alerting() { return !!this.alert && performance.now() < this.alert.until }
+
+  // ---- chat, alerts, sounds ----
+  pushChat(m) { this.chat.push(m); if (this.chat.length > 60) this.chat.shift() }
+  showAlert(title, sub = '', ms = 7000) { this.alert = { title, sub, until: performance.now() + ms } }
+  async playSound(path) {
+    if (!this.sounds[path]) { const u = await api.invoke('file:read', path); this.sounds[path] = await this.ac.decodeAudioData(u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength)) }
+    const n = this.ac.createBufferSource()
+    n.buffer = this.sounds[path]; n.connect(this.fx); n.start()
+    this.playing?.stop?.(); this.playing = n
+  }
+  stopSound() { try { this.playing?.stop() } catch {} this.playing = null }
+  drawChat(x, y, w, h) {
+    const { ctx } = this, fs = Math.max(12, w * 0.042), lh = fs * 1.6, ms = this.chat.slice(-Math.floor(h / lh))
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle'
+    ms.forEach((m, i) => {
+      const yy = y + h - (ms.length - i - 0.5) * lh, plain = m.type === 'chat'
+      ctx.fillStyle = plain ? 'rgba(0,0,0,.5)' : m.type === 'superchat' ? 'rgba(250,204,21,.92)' : 'rgba(74,222,128,.9)'
+      ctx.fillRect(x, yy - lh / 2, w, lh - 2)
+      const a = m.author + (m.amount ? ' · ' + m.amount : '')
+      ctx.font = `700 ${fs}px ${FONT}`
+      ctx.fillStyle = plain ? `hsl(${[...m.author].reduce((s, c) => s + c.charCodeAt(0), 0) % 360} 85% 72%)` : '#000'
+      ctx.fillText(a, x + fs * 0.5, yy)
+      const aw = ctx.measureText(a).width
+      ctx.font = `500 ${fs}px ${FONT}`; ctx.fillStyle = plain ? '#fff' : '#000'
+      ctx.fillText(m.text, x + fs * 0.9 + aw, yy)
+    })
+  }
+  drawAlert(x, y, w, h) {
+    const { ctx } = this, a = this.alert, g = ctx.createLinearGradient(x, y, x + w, y + h)
+    g.addColorStop(0, '#7c3aed'); g.addColorStop(1, '#ec4899')
+    ctx.fillStyle = g; ctx.fillRect(x, y, w, h)
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+    ctx.font = `800 ${h * 0.3}px ${FONT}`; ctx.fillText(a.title, x + w / 2, y + h * (a.sub ? 0.38 : 0.52), w * 0.94)
+    if (a.sub) { ctx.font = `500 ${h * 0.19}px ${FONT}`; ctx.fillText(a.sub, x + w / 2, y + h * 0.72, w * 0.94) }
+  }
 
   // ---- scene ----
   get scene() { return this.s.scenes?.find(x => x.id === this.s.sceneId) || this.s.scenes?.[0] }
@@ -139,6 +180,10 @@ export class Engine {
     }
     this.geo = {}
     for (const l of sc.layers) if (l.visible) this.layer(l, W, H)
+    if (this.alerting && !sc.layers.some(l => l.visible && l.type === 'alert')) { // no alert source in this scene: show it top-centre anyway
+      const w = W * 0.5, h = Math.min(H * 0.14, w * 0.26), x = (W - w) / 2, y = H * 0.06
+      ctx.save(); ctx.beginPath(); ctx.roundRect(x, y, w, h, h * 0.3); ctx.clip(); this.drawAlert(x, y, w, h); ctx.restore()
+    }
     if (this.hidden) {
       ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
       ctx.font = `700 ${H * 0.06}px ${FONT}`
@@ -168,7 +213,7 @@ export class Engine {
       }
     }
     const g = this.geo[l.id] = { cx: l.x * W, cy: l.y * H, w: dw, h: dh, rot: l.rot * Math.PI / 180, sx, sy, sw, sh, flip: l.flip, phone: l.type === 'phone' && !!src }
-    if (!src && l.type !== 'text' && l.type !== 'color') return // nothing to draw yet, but still selectable
+    if ((!src && !['text', 'color', 'chat', 'alert'].includes(l.type)) || (l.type === 'alert' && !this.alerting)) return // nothing to draw yet, but still selectable
     const x = -dw / 2, y = -dh / 2, gr = l.grade, path = () => { ctx.beginPath(); ctx.roundRect(x, y, dw, dh, l.radius * Math.min(dw, dh)) }
     ctx.save()
     ctx.translate(g.cx, g.cy); ctx.rotate(g.rot); ctx.globalAlpha = l.opacity
@@ -185,7 +230,9 @@ export class Engine {
     else if (l.type === 'color') {
       const gd = ctx.createLinearGradient(x, y, x + dw, y + dh); gd.addColorStop(0, l.color); gd.addColorStop(1, l.color2 || l.color)
       ctx.fillStyle = gd; ctx.fillRect(x, y, dw, dh)
-    } else {
+    } else if (l.type === 'chat') this.drawChat(x, y, dw, dh)
+    else if (l.type === 'alert') this.drawAlert(x, y, dw, dh)
+    else {
       if (l.bgOn) { ctx.fillStyle = l.bg; ctx.fillRect(x, y, dw, dh) }
       ctx.fillStyle = l.color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(txt, 0, fs * 0.05)
     }

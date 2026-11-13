@@ -3,7 +3,7 @@
 export const uid = () => Math.random().toString(36).slice(2, 9)
 
 export const TYPES = [['phone', 'Phone'], ['webcam', 'Webcam'], ['screen', 'Screen / window'], ['image', 'Image'], ['video', 'Video file'],
-  ['browser', 'Web page / alerts'], ['text', 'Text'], ['clock', 'Clock'], ['color', 'Color / gradient']]
+  ['browser', 'Web page / alerts'], ['chat', 'YouTube chat'], ['alert', 'Alert box (Super Chat)'], ['text', 'Text'], ['clock', 'Clock'], ['color', 'Color / gradient']]
 
 const G0 = { b: 1, c: 1, s: 1, hue: 0, sepia: 0, blur: 0 }
 export const GRADES = {
@@ -16,6 +16,8 @@ export const L = (type, o = {}) => ({
   id: uid(), type, name: TYPES.find(t => t[0] === type)[1], visible: true, x: 0.5, y: 0.5, w: 0.5, h: 0.5, fit: 'contain', rot: 0, opacity: 1,
   radius: 0, border: 0, borderColor: '#ffffff', shadow: 0, flip: false, crop: [0, 0, 0, 0], grade: { ...G0 },
   ...(type === 'text' ? { text: 'Your text', color: '#ffffff', bg: '#000000', bgOn: true, h: 0.08, radius: 0.5 } : {}),
+  ...(type === 'chat' ? { x: 0.84, y: 0.6, w: 0.3, h: 0.5, radius: 0.04, fit: 'stretch' } : {}),
+  ...(type === 'alert' ? { x: 0.5, y: 0.14, w: 0.5, h: 0.14, radius: 0.3, fit: 'stretch' } : {}),
   ...(type === 'color' ? { color: '#7c3aed', color2: '#ec4899', fit: 'stretch' } : {}), ...o
 })
 export const newLayer = type => type === 'clock' ? L('text', { name: 'Clock', text: '{time}', x: 0.9, y: 0.08, h: 0.06 }) : L(type)

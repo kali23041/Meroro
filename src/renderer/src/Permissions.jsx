@@ -1,6 +1,6 @@
 // Permissions & screens manager: OS media permissions, phone authorization, and screen/window sources.
 import { useEffect, useState } from 'react'
-import { X, Camera, Mic, Monitor, Smartphone, RefreshCw, Plus, Check, AlertTriangle } from 'lucide-react'
+import { X, Camera, Mic, Monitor, Wifi, Smartphone, RefreshCw, Plus, Check, AlertTriangle } from 'lucide-react'
 import { Button, cx } from './ui'
 
 const api = window.api
@@ -57,6 +57,10 @@ export default function Permissions({ onClose, devices, addScreen }) {
             {row('microphone', Mic, 'Microphone', 'Your voice in the stream')}
             {row('screen', Monitor, 'Screen recording', mac ? 'Screen and window sources. After allowing it in System Settings, restart Meroro.' : 'Screen and window sources')}
             {mac && st.screen !== 'granted' && <div className="flex justify-end"><Button onClick={() => api.invoke('app:relaunch')}><RefreshCw size={12} />Restart Meroro</Button></div>}
+            {mac && <Item icon={Wifi} title="Local network" ok status="Needed for Wi-Fi"
+              desc="Wireless phone connections. If Wi-Fi connect fails with “local network”, turn Meroro on here.">
+              <Button onClick={() => api.invoke('perm:open', 'network')}>Open Settings</Button>
+            </Item>}
             <Item icon={Smartphone} title="Android phone" ok={phoneOk}
               status={phoneOk ? 'Authorized' : devices.some(d => d.state === 'unauthorized') ? 'Tap Allow on phone' : 'Not connected'}
               desc={phoneOk ? devices.filter(d => d.state === 'device').map(d => d.model).join(', ') : 'Settings → Developer options → USB debugging, then plug in and tap Allow'} />

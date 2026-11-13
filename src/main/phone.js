@@ -47,10 +47,43 @@ export async function listApps(serial) {
 }
 
 // Package of the app currently in front on the phone's own screen ('' when unknown).
+// Precise: the resumed activity is the app really in front; overlays (notification shade,
+// quick settings, lock screen) are reported as com.android.systemui so they get covered too.
 export async function foreground(serial) {
-  const out = await adb(['-s', serial, 'shell', "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'"], { timeout: 4000 }).catch(() => '')
-  return out.match(/u0 ([^\s/}]+)/)?.[1] || ''
+  const out = await adb(['-s', serial, 'shell',
+    "dumpsys window | grep -m1 mCurrentFocus; dumpsys activity activities | grep -m1 -E 'topResumedActivity|mResumedActivity'"], { timeout: 4000 }).catch(() => '')
+  const [focus = '', resumed = ''] = out.split('\n')
+  if (/NotificationShade|StatusBar|Keyguard|ShadeWindow|PopupWindow:.*systemui/.test(focus)) return 'com.android.systemui'
+  return resumed.match(/u0 ([^\s/}]+)/)?.[1] || focus.match(/u0 ([^\s/}]+)/)?.[1] || ''
 }
+
+export async function deviceInfo(serial) {
+  const out = await adb(['-s', serial, 'shell', [
+    'getprop ro.product.manufacturer', 'getprop ro.product.model', 'getprop ro.build.version.release', 'getprop ro.build.version.sdk',
+    'wm size | tail -1', 'dumpsys battery | grep -E "^  (level|temperature|status|AC powered|USB powered):"', 'df -h /data | tail -1', 'getprop ro.product.cpu.abi'
+  ].join(';')], { timeout: 8000 })
+  const l = out.split('\n').map(x => x.trim())
+  const bat = k => out.match(new RegExp(k + ': (\\S+)'))?.[1]
+  const df = (l.find(x => /\d+%/.test(x)) || '').split(/\s+/)
+  return {
+    maker: l[0], model: l[1], android: l[2], sdk: l[3], screen: (out.match(/size: (\d+x\d+)/) || [])[1],
+    battery: +bat('level') || 0, temp: (+bat('temperature') || 0) / 10, charging: bat('AC powered') === 'true' || bat('USB powered') === 'true',
+    storage: { size: df[1], used: df[2], free: df[3], pct: parseInt(df[4]) || 0 }, abi: l.filter(Boolean).at(-1)
+  }
+}
+
+export async function appInfo(serial, pkg) {
+  const out = await adb(['-s', serial, 'shell', `dumpsys package ${pkg} | grep -m6 -E 'versionName|firstInstallTime|lastUpdateTime|targetSdk'`], { timeout: 8000 }).catch(() => '')
+  const g = k => out.match(new RegExp(k + '=([^\\n]+?)(\\s+\\w+=|$)', 'm'))?.[1]?.trim()
+  return { version: g('versionName'), installed: g('firstInstallTime'), updated: g('lastUpdateTime') }
+}
+
+export const appAction = (serial, pkg, act) => act === 'stop'
+  ? adb(['-s', serial, 'shell', 'am', 'force-stop', pkg])
+  : adb(['-s', serial, 'shell', 'monkey', '-p', pkg, '-c', 'android.intent.category.LAUNCHER', '1'])
+
+export const screenshot = serial => new Promise((res, rej) =>
+  execFile(ADB, ['-s', serial, 'exec-out', 'screencap', '-p'], { encoding: 'buffer', maxBuffer: 64 << 20, timeout: 15000 }, (e, out) => e ? rej(e) : res(out)))
 
 const freePort = () => new Promise((res, rej) => {
   const s = createServer().once('error', rej).listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)) })
@@ -87,7 +120,8 @@ export class Session {
     this.port = await freePort()
     await adb(['-s', serial, 'forward', `tcp:${this.port}`, `localabstract:scrcpy_${scid}`])
     const args = [`scid=${scid}`, 'log_level=info', 'tunnel_forward=true', 'send_device_meta=false', 'control=true',
-      `audio=${!!o.audio}`, 'audio_codec=raw', 'video_codec=h264', `max_size=${o.maxSize || 0}`,
+      `audio=${!!o.audio}`, 'audio_codec=raw', ...(o.audio && o.dup ? ['audio_source=playback', 'audio_dup=true'] : []), // dup: keep sound on the phone too (Android 13+)
+      'video_codec=h264', `max_size=${o.maxSize || 0}`,
       `video_bit_rate=${(o.bitrate || 8) * 1e6}`, `max_fps=${o.fps || 60}`, 'stay_awake=true']
     if (o.virtual) args.push(`new_display=${o.display || ''}`, 'vd_destroy_content=false')
     this.proc = spawn(ADB, await serverCmd(serial, args), { windowsHide: true })
@@ -132,7 +166,7 @@ export class Session {
     if (m.t === 'touch') { // a: 0 down, 1 up, 2 move
       const b = Buffer.alloc(32)
       b[0] = 2; b[1] = m.a
-      b.writeBigUInt64BE(0xfffffffffffffffen, 2) // generic finger
+      b.writeBigUInt64BE(m.id != null ? BigInt(m.id) : 0xfffffffffffffffen, 2) // key-mapping finger, or the generic finger
       b.writeInt32BE(m.x, 10); b.writeInt32BE(m.y, 14); b.writeUInt16BE(m.w, 18); b.writeUInt16BE(m.h, 20)
       b.writeUInt16BE(m.a === 1 ? 0 : 0xffff, 22)
       b.writeInt32BE(m.a === 2 ? 0 : 1, 24); b.writeInt32BE(m.a === 1 ? 0 : 1, 28)

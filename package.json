@@ -1,7 +1,7 @@
 {
   "name": "meroro",
   "productName": "Meroro",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Meroro \u2014 phone streaming studio by Kartik Sabale. Mirror an Android phone or a single app and go live on YouTube.",
   "author": "Kartik Sabale",
   "main": "out/main/index.js",
@@ -9,13 +9,12 @@
     "postinstall": "node scripts/fetch-bins.mjs",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "dist:mac": "npm run build && electron-builder --mac",
-    "dist:win": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac -c.electronDist=node_modules/electron/dist",
+    "dist:win": "node scripts/fetch-bins.mjs win && npm run build && electron-builder --win --x64",
     "pack": "npm run build && electron-builder --dir"
   },
   "build": {
     "appId": "com.meroro.studio",
-    "electronDist": "node_modules/electron/dist",
     "productName": "Meroro",
     "files": [
       "out/**"
@@ -38,13 +37,20 @@
       "hardenedRuntime": false,
       "extendInfo": {
         "NSCameraUsageDescription": "Meroro uses the camera for your webcam overlay.",
-        "NSMicrophoneUsageDescription": "Meroro uses the microphone for your stream audio."
+        "NSMicrophoneUsageDescription": "Meroro uses the microphone for your stream audio.",
+        "NSLocalNetworkUsageDescription": "Meroro connects to your Android phone over Wi-Fi (wireless debugging).",
+        "NSBonjourServices": [
+          "_adb._tcp",
+          "_adb-tls-connect._tcp",
+          "_adb-tls-pairing._tcp"
+        ]
       }
     },
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "icon": "build/icon.png"
     },
     "nsis": {
       "oneClick": false,
@@ -53,7 +59,8 @@
     "copyright": "\u00a9 2026 Kartik Sabale",
     "dmg": {
       "title": "Meroro"
-    }
+    },
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
   },
   "devDependencies": {
     "@radix-ui/react-slider": "^1.6.1",

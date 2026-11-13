@@ -1,6 +1,6 @@
 // Right-hand panel: Scenes, Sources, per-source properties + grading, and Stream settings.
 import { useEffect, useState } from 'react'
-import { Radio, Layers, Eye, EyeOff, ExternalLink, Plus, Copy, Trash2, ChevronUp, ChevronDown, SlidersHorizontal, Palette, Clapperboard, Image as ImageIcon, Zap, ArrowRight } from 'lucide-react'
+import { Radio, Layers, Eye, EyeOff, ExternalLink, Plus, Copy, Trash2, ChevronUp, ChevronDown, SlidersHorizontal, Palette, Clapperboard, Image as ImageIcon, Zap, ArrowRight, MessageSquare, Sparkles } from 'lucide-react'
 import { Button, Segmented, Slider, Switch, Select, Input, Row, Section, cx } from './ui'
 import { TYPES, GRADES, PRESETS, grade, newLayer, uid } from './scene'
 
@@ -10,7 +10,8 @@ const Color = ({ value, onChange }) => <input type="color" value={value || '#000
 const S = ({ label, v, on, min = 0, max = 1, step = 0.01 }) => <Row label={label}><Slider value={v} onChange={on} min={min} max={max} step={step} /></Row>
 const icon = 'p-1 rounded text-zinc-500 hover:text-zinc-100 hover:bg-white/10 disabled:opacity-30'
 
-export default function Panel({ s, set, live, busy, media, sel, setSel, focus, apps }) {
+export default function Panel({ s, set, live, busy, media, sel, setSel, focus, apps, mode, chatBox, goPresets }) {
+  const [pt, setPt] = useState('source')
   const [tab, setTab] = useState('scene'), [showKey, setShowKey] = useState(false), [screens, setScreens] = useState([])
   const scene = s.scenes.find(x => x.id === s.sceneId) || s.scenes[0]
   const upScene = p => set({ scenes: s.scenes.map(x => x.id === scene.id ? { ...x, ...p } : x) })
@@ -29,10 +30,11 @@ export default function Panel({ s, set, live, busy, media, sel, setSel, focus, a
   useEffect(() => { if (l?.type === 'screen') api.invoke('screen:list').then(setScreens).catch(() => {}) }, [l?.id])
 
   return (
-    <aside className="w-[310px] shrink-0 border-l border-white/[0.06] overflow-y-auto bg-zinc-900/40">
-      <div className="p-3 pb-0"><Segmented value={tab} onChange={setTab} options={[['scene', 'Scene', Layers], ['auto', 'Auto', Zap], ['stream', 'Stream', Radio]]} /></div>
+    <aside className={mode ? 'w-full' : 'w-[310px] shrink-0 border-l border-white/[0.06] overflow-y-auto bg-zinc-900/40'}>
+      {!mode && <div className="p-3 pb-0"><Segmented value={tab} onChange={setTab} options={[['scene', 'Scene', Layers], ['chat', 'Chat', MessageSquare], ['stream', 'Stream', Radio]]} /></div>}
+      {!mode && tab === 'chat' && <div className="p-3">{chatBox}</div>}
 
-      {tab === 'scene' && <>
+      {!mode && tab === 'scene' && <>
         <Section icon={Clapperboard} title="Scenes" right={<>
           <button className={icon} title="New scene" onClick={() => addScene({ id: uid(), name: 'Scene ' + (s.scenes.length + 1), bg: '#0b0b0f', bg2: '', bgBlur: false, layers: [] })}><Plus size={13} /></button>
           <button className={icon} title="Duplicate" onClick={() => addScene({ ...scene, id: uid(), name: scene.name + ' copy', layers: layers.map(x => ({ ...x, id: uid() })) })}><Copy size={12} /></button>
@@ -45,7 +47,7 @@ export default function Panel({ s, set, live, busy, media, sel, setSel, focus, a
             ))}
           </div>
           <Row label="Name"><Input value={scene.name} onChange={e => upScene({ name: e.target.value })} /></Row>
-          <Select value="" onChange={preset} options={[['', 'Add scene from preset…'], ...Object.keys(PRESETS).map(k => [k, k])]} />
+          <Button variant="primary" className="w-full" onClick={goPresets}><Sparkles size={12} />Browse presets</Button>
         </Section>
 
         <Section icon={Layers} title="Sources">
@@ -68,6 +70,8 @@ export default function Panel({ s, set, live, busy, media, sel, setSel, focus, a
         {l && <>
           <Section icon={SlidersHorizontal} title={`${l.name} · properties`}>
             <Row label="Name"><Input value={l.name} onChange={e => up({ name: e.target.value })} /></Row>
+            <Segmented value={pt} onChange={setPt} options={[['source', 'Source'], ['move', 'Move'], ['style', 'Style'], ['color', 'Color']]} />
+            {pt === 'source' && <>
             {l.type === 'webcam' && <Row label="Camera"><Select className="flex-1" value={l.src || ''} onChange={src => up({ src })} options={[['', 'Choose…'], ['default', 'System default'], ...media.cams]} /></Row>}
             {l.type === 'screen' && <Row label="Capture"><Select className="flex-1" value={l.src || ''} onChange={src => up({ src })} options={[['', 'Choose screen or window…'], ...screens]} /></Row>}
             {(l.type === 'image' || l.type === 'video') && <Row label="File">
@@ -82,6 +86,8 @@ export default function Panel({ s, set, live, busy, media, sel, setSel, focus, a
             </>}
             {l.type === 'color' && <Row label="Colors"><Color value={l.color} onChange={color => up({ color })} /><Color value={l.color2} onChange={color2 => up({ color2 })} /></Row>}
             {isMedia && <Row label="Fit"><div className="flex-1"><Segmented value={l.fit} onChange={fit => up({ fit })} options={[['contain', 'Fit'], ['cover', 'Fill'], ['stretch', 'Stretch']]} /></div></Row>}
+            {!['webcam', 'screen', 'image', 'video', 'browser', 'text', 'color'].includes(l.type) && <p className="text-[11px] text-zinc-500">{l.type === 'chat' ? 'Shows your YouTube chat. Connect it in the Chat tab.' : l.type === 'alert' ? 'Pops up when an automation shows an alert.' : 'Shows your phone once capture is running.'}</p>}
+            </>}{pt === 'move' && <>
             <div className="flex gap-1.5">
               <Button className="flex-1" onClick={() => up({ x: 0.5, y: 0.5 })}>Center</Button>
               <Button className="flex-1" onClick={() => up({ x: 0.5, y: 0.5, w: 1, h: 1, rot: 0 })}>Fill canvas</Button>
@@ -92,15 +98,17 @@ export default function Panel({ s, set, live, busy, media, sel, setSel, focus, a
             <S label="Position X" v={l.x} on={x => up({ x })} min={-0.2} max={1.2} />
             <S label="Position Y" v={l.y} on={y => up({ y })} min={-0.2} max={1.2} />
             <S label="Rotation" v={l.rot} on={rot => up({ rot })} min={-180} max={180} step={1} />
+            </>}{pt === 'style' && <>
             <S label="Opacity" v={l.opacity} on={opacity => up({ opacity })} />
             <S label="Corner radius" v={l.radius} on={radius => up({ radius })} max={0.5} />
             <Row label="Border"><Slider value={l.border} onChange={border => up({ border })} max={24} step={1} /><Color value={l.borderColor} onChange={borderColor => up({ borderColor })} /></Row>
             <S label="Shadow" v={l.shadow} on={shadow => up({ shadow })} />
             {isMedia && ['Crop left', 'Crop top', 'Crop right', 'Crop bottom'].map((t, i) =>
               <S key={t} label={t} v={l.crop[i]} on={v => up({ crop: l.crop.map((c, j) => j === i ? v : c) })} max={0.45} />)}
+            </>}
           </Section>
 
-          <Section icon={Palette} title="Color grading">
+          {pt === 'color' && <Section icon={Palette} title="Color grading">
             <Select value="" onChange={g => up({ grade: grade(g) })} options={[['', 'Apply a look…'], ...Object.keys(GRADES).map(k => [k, k])]} />
             <S label="Brightness" v={l.grade.b} on={b => upG({ b })} min={0.5} max={1.5} />
             <S label="Contrast" v={l.grade.c} on={c => upG({ c })} min={0.5} max={1.6} />
@@ -108,7 +116,7 @@ export default function Panel({ s, set, live, busy, media, sel, setSel, focus, a
             <S label="Hue" v={l.grade.hue} on={hue => upG({ hue })} min={-180} max={180} step={1} />
             <S label="Warmth" v={l.grade.sepia} on={sepia => upG({ sepia })} />
             <S label="Blur" v={l.grade.blur} on={blur => upG({ blur })} max={30} step={1} />
-          </Section>
+          </Section>}
         </>}
 
         <Section icon={Palette} title="Background">
@@ -118,7 +126,7 @@ export default function Panel({ s, set, live, busy, media, sel, setSel, focus, a
         </Section>
       </>}
 
-      {tab === 'auto' && <>
+      {mode === 'auto' && <>
         <Section icon={Zap} title="Auto scene switching" right={<Switch checked={!!s.autoSwitch} onChange={autoSwitch => set({ autoSwitch })} />}>
           <p className="text-[11px] leading-relaxed text-zinc-500">When you switch apps on the phone, Meroro switches to the matching scene by itself.</p>
           <div className="flex items-center gap-2 rounded-lg bg-white/[0.04] border border-white/[0.06] px-2 h-8">
@@ -150,7 +158,7 @@ export default function Panel({ s, set, live, busy, media, sel, setSel, focus, a
         </Section>
       </>}
 
-      {tab === 'stream' && (
+      {!mode && tab === 'stream' && (
         <Section icon={Radio} title="Stream">
           <Row label="Destination"><Select className="flex-1" disabled={!!live} value={s.dest} onChange={dest => set({ dest })} options={[['youtube', 'YouTube Live'], ['custom', 'Custom RTMP']]} /></Row>
           {s.dest === 'custom' && <Row label="Server"><Input disabled={!!live} value={s.customUrl} onChange={e => set({ customUrl: e.target.value })} placeholder="rtmp://live.example.com/app" /></Row>}

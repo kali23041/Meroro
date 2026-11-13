@@ -3,10 +3,11 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { spawn, execFile } from 'node:child_process'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { splashWindow } from './splash'
 import { BRAND } from '../shared/brand'
-import { adb, listDevices, listApps, foreground, Session, FFMPEG } from './phone'
+import { Chat } from './chat'
+import { adb, listDevices, listApps, foreground, deviceInfo, appInfo, appAction, screenshot, Session, FFMPEG } from './phone'
 
 const mac = process.platform === 'darwin'
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
@@ -49,9 +50,72 @@ ipcMain.on('settings:set', (_, s) => {
 
 // ---- phone ----
 ipcMain.handle('devices', () => listDevices())
-ipcMain.handle('adb:connect', (_, addr) => adb(['connect', addr]))
+// ---- wireless adb: adb exits 0 even on failure, so the output text decides ----
+const hostPort = (a, port) => { a = a.trim().replace(/^adb\s+(connect|pair)\s+/, ''); return /:\d+$/.test(a) ? a : `${a}:${port}` }
+ipcMain.handle('adb:connect', async (_, addr) => {
+  const out = (await adb(['connect', hostPort(addr, 5555)], { timeout: 12000 })).trim()
+  if (/No route to host/.test(out) && mac) throw new Error('macOS is blocking Meroro from your local network. Open System Settings → Privacy & Security → Local Network, turn on Meroro, then restart Meroro.')
+  if (!/connected to/.test(out)) throw new Error(/refused|timed out|No route/i.test(out) ? `${out}. On Android 11+ use the IP address & port shown under Wireless debugging (it is not 5555), and pair first if this Mac is new.` : out)
+  return out
+})
+ipcMain.handle('adb:pair', async (_, addr, code) => {
+  const out = (await adb(['pair', hostPort(addr, 0), String(code).trim()], { timeout: 20000 })).trim()
+  if (/No route to host/.test(out) && mac) throw new Error('macOS is blocking Meroro from your local network. Open System Settings → Privacy & Security → Local Network, turn on Meroro, then restart Meroro.')
+  if (!/Successfully paired/i.test(out)) throw new Error(out || 'Pairing failed. Check the code and the pairing port.')
+  return out
+})
+ipcMain.handle('adb:mdns', async () => {
+  const out = await adb(['mdns', 'services'], { timeout: 5000 }).catch(() => '')
+  return out.split('\n').map(l => l.trim().split(/\s+/)).filter(p => p.length >= 3 && /_adb-tls-(connect|pairing)/.test(p[1]))
+    .map(([name, type, addr]) => ({ name, addr, pair: type.includes('pairing') }))
+})
+ipcMain.handle('adb:wireless', async (_, serial) => { // USB phone → Wi-Fi with one click
+  const ipOut = await adb(['-s', serial, 'shell', 'ip -f inet addr show wlan0'])
+  const ip = ipOut.match(/inet (\d+\.\d+\.\d+\.\d+)/)?.[1]
+  if (!ip) throw new Error('The phone is not on Wi-Fi. Connect it to the same network as this computer.')
+  await adb(['-s', serial, 'tcpip', '5555'])
+  let last = ''
+  for (let i = 0; i < 20; i++) { // phones take a few seconds to restart adb in network mode
+    await new Promise(r => setTimeout(r, 1000))
+    const out = (await adb(['connect', `${ip}:5555`], { timeout: 6000 }).catch(e => e.message)).trim()
+    if (/connected to/.test(out)) return `Connected over Wi-Fi (${ip}:5555). You can unplug the cable.`
+    last = out
+  }
+  if (/No route to host/.test(last) && mac) throw new Error('macOS is blocking Meroro from your local network. Open System Settings → Privacy & Security → Local Network, turn on Meroro, then restart Meroro.')
+  throw new Error(`Could not reach ${ip}:5555. Make sure this computer and the phone are on the same Wi-Fi.`)
+})
 ipcMain.handle('apps', (_, serial) => listApps(serial))
 ipcMain.handle('focus', (_, serial) => foreground(serial))
+const chat = new Chat(m => send('chat:msg', m))
+ipcMain.handle('chat:start', (_, url) => chat.start(url))
+ipcMain.handle('chat:stop', () => chat.stop())
+ipcMain.handle('device:info', (_, serial) => deviceInfo(serial))
+ipcMain.handle('app:info', (_, serial, pkg) => appInfo(serial, pkg))
+ipcMain.handle('app:action', (_, serial, pkg, act) => appAction(serial, pkg, act))
+ipcMain.handle('device:shot', async (_, serial) => {
+  const f = join(app.getPath('pictures'), `Meroro ${new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 19).replace(/[T:]/g, '-')}.png`)
+  writeFileSync(f, await screenshot(serial))
+  return f
+})
+
+// App icons + category from the Google Play listing, cached on disk (system apps simply have none).
+const metaDir = () => join(app.getPath('userData'), 'appmeta')
+ipcMain.handle('app:meta', async (_, pkg) => {
+  if (!/^[\w.]+$/.test(pkg)) return {}
+  const f = join(metaDir(), pkg + '.json')
+  try { return JSON.parse(readFileSync(f, 'utf8')) } catch {}
+  let meta = {}
+  try {
+    const r = await fetch(`https://play.google.com/store/apps/details?id=${pkg}&hl=en`, { signal: AbortSignal.timeout(8000) })
+    if (r.ok) {
+      const html = await r.text(), img = html.match(/<meta property="og:image" content="([^"]+)"/)?.[1]
+      meta.cat = html.match(/"applicationCategory":"([A-Z_]+)"/)?.[1] || ''
+      if (img) { const i = await fetch(img.replace(/=[^=/]*$/, '') + '=w96-h96', { signal: AbortSignal.timeout(8000) }); if (i.ok) meta.icon = 'data:image/png;base64,' + Buffer.from(await i.arrayBuffer()).toString('base64') }
+    } else if (r.status !== 404) return {} // transient: don't cache
+  } catch { return {} }
+  try { mkdirSync(metaDir(), { recursive: true }); writeFileSync(f, JSON.stringify(meta)) } catch {}
+  return meta
+})
 ipcMain.handle('session:start', async (_, serial, o) => {
   session?.stop()
   const s = session = new Session(serial, o, (type, p) => {
@@ -113,7 +177,7 @@ ipcMain.on('out:stop', (_, id) => {
 
 // ---- scene sources: files, screen/window capture, offscreen web pages ----
 ipcMain.handle('file:pick', async (_, kind) => {
-  const filters = [kind === 'image' ? { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] } : { name: 'Videos', extensions: ['mp4', 'webm', 'mov', 'm4v'] }]
+  const filters = [kind === 'image' ? { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] } : kind === 'audio' ? { name: 'Audio', extensions: ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'] } : { name: 'Videos', extensions: ['mp4', 'webm', 'mov', 'm4v'] }]
   return (await dialog.showOpenDialog(win, { properties: ['openFile'], filters })).filePaths[0] || ''
 })
 ipcMain.handle('file:read', (_, p) => readFile(p))
@@ -133,8 +197,8 @@ ipcMain.handle('browser:open', (_, id, url) => {
 ipcMain.on('browser:close', (_, id) => { pages.get(id)?.destroy(); pages.delete(id) })
 
 // ---- permissions ----
-const PANE = { camera: 'Camera', microphone: 'Microphone', screen: 'ScreenCapture' }
-ipcMain.handle('perm:status', () => Object.fromEntries(Object.keys(PANE).map(k => [k, mac || k !== 'screen' ? systemPreferences.getMediaAccessStatus(k) : 'granted'])))
+const PANE = { camera: 'Camera', microphone: 'Microphone', screen: 'ScreenCapture', network: 'LocalNetwork' }
+ipcMain.handle('perm:status', () => Object.fromEntries(['camera', 'microphone', 'screen'].map(k => [k, mac || k !== 'screen' ? systemPreferences.getMediaAccessStatus(k) : 'granted'])))
 ipcMain.handle('perm:ask', async (_, k) => {
   if (k === 'screen') { await desktopCapturer.getSources({ types: ['screen'] }); return true } // triggers the macOS prompt
   return mac ? systemPreferences.askForMediaAccess(k) : true

@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url'
 
 const SCRCPY = '5.0.1' // keep in sync with src/main/phone.js
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const win = process.platform === 'win32'
+const win = (process.argv[2] || process.platform).startsWith('win')
+const cross = win !== (process.platform === 'win32')
 const dir = join(root, 'bin', win ? 'win' : 'mac')
 const exe = win ? '.exe' : ''
 mkdirSync(dir, { recursive: true })
@@ -37,8 +38,12 @@ if (!existsSync(join(dir, 'adb' + exe))) {
 }
 
 if (!existsSync(join(dir, 'ffmpeg' + exe))) {
-  const src = createRequire(import.meta.url)('ffmpeg-static')
-  copyFileSync(src, join(dir, 'ffmpeg' + exe))
+  const req = createRequire(import.meta.url)
+  if (cross) {
+    const tag = req('ffmpeg-static/package.json')['ffmpeg-static']['binary-release-tag']
+    console.log('fetching ffmpeg for', win ? 'windows' : 'mac')
+    await download(`https://github.com/eugeneware/ffmpeg-static/releases/download/${tag}/ffmpeg-${win ? 'win32-x64' : 'darwin-arm64'}`, join(dir, 'ffmpeg' + exe))
+  } else copyFileSync(req('ffmpeg-static'), join(dir, 'ffmpeg' + exe))
   if (!win) chmodSync(join(dir, 'ffmpeg'), 0o755)
 }
 
@@ -52,17 +57,20 @@ if (!existsSync(icon)) {
     return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - r
   }
   const a = d => Math.min(1, Math.max(0, 0.5 - d))
+  const seg = (x, y, ax, ay, bx, by) => { // distance to a line segment
+    const px = x - ax, py = y - ay, dx = bx - ax, dy = by - ay, t = Math.max(0, Math.min(1, (px * dx + py * dy) / (dx * dx + dy * dy)))
+    return Math.hypot(px - dx * t, py - dy * t)
+  }
+  const M = [[312, 690, 312, 376], [312, 376, 512, 576], [512, 576, 712, 376], [712, 376, 712, 690]]
+  const mix = (c1, c2, t) => c1.map((v, i) => v + (c2[i] - v) * t)
   for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-    const t = (x + y) / (2 * N)
-    let c = [124 + 112 * t, 58 + 14 * t, 237 - 84 * t] // violet → pink
-    const phone = a(box(x, y, 512, 512, 170, 300, 56)) * (1 - a(box(x, y, 512, 512, 138, 268, 30)))
-    const dot = a(Math.hypot(x - 512, y - 512) - 62)
-    const dx = x - 512, dy = y - 512, R = Math.hypot(dx, dy)
-    const arcs = Math.abs(Math.atan2(dy, Math.abs(dx))) < 0.698 ? Math.max(a(Math.abs(R - 100) - 9), a(Math.abs(R - 128) - 9)) : 0
-    const w = Math.max(phone, dot, arcs)
-    c = c.map(v => v + (255 - v) * w)
+    const tile = box(x, y, 512, 512, 412, 412, 186)
+    let c = mix([13, 11, 20], [255, 255, 255], 0.12 * a(Math.abs(tile + 10) - 5)) // dark tile + hairline border
+    const t = Math.max(0, Math.min(1, ((x - 312) / 400 + (690 - y) / 314) / 2))
+    c = mix(c, mix([139, 92, 246], [244, 114, 182], t), a(Math.min(...M.map(s => seg(x, y, ...s))) - 46))
+    c = mix(c, [255, 255, 255], a(Math.hypot(x - 512, y - 356) - 50))
     const o = y * (N * 4 + 1) + 1 + x * 4
-    px[o] = c[0]; px[o + 1] = c[1]; px[o + 2] = c[2]; px[o + 3] = 255 * a(box(x, y, 512, 512, 412, 412, 186))
+    px[o] = c[0]; px[o + 1] = c[1]; px[o + 2] = c[2]; px[o + 3] = 255 * a(tile)
   }
   const crcT = Array.from({ length: 256 }, (_, n) => { for (let k = 0; k < 8; k++) n = n & 1 ? 0xedb88320 ^ (n >>> 1) : n >>> 1; return n >>> 0 })
   const crc = b => { let c = ~0; for (const v of b) c = crcT[(c ^ v) & 255] ^ (c >>> 8); return ~c >>> 0 }
