@@ -49,7 +49,7 @@ export default function Keys({ s, set, eng, focus, apps }) {
         <div className="flex-1 min-w-0 flex flex-col gap-3">
           <div className="flex flex-wrap gap-1.5">
             {Object.entries(maps).map(([k, m]) => (
-              <button key={k} onClick={() => { set({ keymapId: k }); setSel('') }} className={cx('h-8 px-3 rounded-lg border text-[12px] font-medium flex items-center gap-1.5', k === id ? 'bg-violet-500/20 border-violet-400/50 text-white' : 'border-white/[0.08] text-zinc-400 hover:text-white')}>
+              <button key={k} onClick={() => { set({ keymapId: k }); setSel('') }} className={cx('h-8 px-3 rounded-lg border text-[12px] font-medium flex items-center gap-1.5', k === id ? 'bg-white/[0.14] border-white/30 text-white' : 'border-white/[0.08] text-zinc-400 hover:text-white')}>
                 <Gamepad2 size={13} />{m.name}{m.pkg && m.pkg === focus && <span className="size-1.5 rounded-full bg-emerald-400 live-dot" />}
               </button>
             ))}

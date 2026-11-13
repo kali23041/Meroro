@@ -29,7 +29,7 @@ export function Quick({ q, compact }) {
       {items.map(([t, I, fn, on, dis, tone]) => (
         <button key={t} disabled={dis} onClick={fn}
           className={cx('h-[68px] rounded-xl border flex flex-col items-center justify-center gap-1.5 text-[11px] font-medium transition-colors disabled:opacity-40',
-            on ? 'bg-violet-500/20 border-violet-400/50 text-white' : 'bg-white/[0.03] border-white/[0.06] text-zinc-300 hover:bg-white/[0.07]')}>
+            on ? 'bg-white/[0.14] border-white/30 text-white' : 'bg-white/[0.03] border-white/[0.06] text-zinc-300 hover:bg-white/[0.07]')}>
           <I size={18} className={on ? 'text-violet-300' : tone || 'text-zinc-400'} />{t}
         </button>
       ))}

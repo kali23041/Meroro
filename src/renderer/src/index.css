@@ -7,7 +7,7 @@
 :root { color-scheme: dark; }
 html, body, #root { height: 100%; }
 body {
-  margin: 0; overflow: hidden; background: #09090b; color: #e4e4e7; font-size: 13px;
+  margin: 0; overflow: hidden; background: #0e0e0f; letter-spacing: -0.003em; color: #e4e4e7; font-size: 13px;
   user-select: none; -webkit-user-select: none; cursor: default; -webkit-font-smoothing: antialiased;
 }
 input, textarea { user-select: text; -webkit-user-select: text; }
@@ -18,3 +18,12 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 ::-webkit-scrollbar-thumb:hover { background: #ffffff26; }
 @keyframes pulse-live { 50% { opacity: .35; } }
 .live-dot { animation: pulse-live 1.4s ease-in-out infinite; }
+
+/* soft, nature-toned glow behind the glass cards */
+.backdrop { background: #0e0e0f; }
+.glass-slider span { transition: left .12s ease-out, right .12s ease-out, height .15s, width .15s, background-color .15s; }
+@keyframes pop { from { opacity: 0; transform: translateY(6px) scale(.985); } }
+.pop { animation: pop .22s cubic-bezier(.2,.8,.2,1); }
+/* pages shown inside the dock card are tighter */
+.dock h1 { font-size: 14px; } .dock h1 + p { display: none; }
+.dock .px-6 { padding-left: 14px; padding-right: 14px; } .dock .pt-5 { padding-top: 10px; } .dock .pb-4 { padding-bottom: 8px; }

@@ -67,7 +67,7 @@ export default function Library({ apps, meta, serial, ready, focus, picked, onSt
           <div className="grid grid-cols-[repeat(auto-fill,minmax(112px,1fr))] gap-2">
             {list.map(a => (
               <button key={a.pkg} onClick={() => setSel(a.pkg)} onDoubleClick={() => onStream(a.pkg)}
-                className={cx('relative flex flex-col items-center gap-2 rounded-xl p-3 pt-4 border transition-colors', a.pkg === sel ? 'bg-violet-500/15 border-violet-400/50' : 'border-transparent hover:bg-white/[0.05]')}>
+                className={cx('relative flex flex-col items-center gap-2 rounded-xl p-3 pt-4 border transition-colors', a.pkg === sel ? 'bg-white/[0.14] border-white/30' : 'border-transparent hover:bg-white/[0.05]')}>
                 <AppIcon app={a} meta={meta} size={52} />
                 <span className="w-full truncate text-center text-[12px] text-zinc-200">{a.name}</span>
                 {a.pkg === focus && <span className="absolute top-2 right-2 size-2 rounded-full bg-emerald-400 live-dot" title="Open on phone" />}

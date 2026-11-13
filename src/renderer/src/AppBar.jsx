@@ -19,9 +19,9 @@ export default function AppBar({ apps, meta, focus, ready, dev, err, retry, s, s
 
   return (
     <>
-      <div className="h-[64px] shrink-0 flex items-center gap-3 px-3 border-t border-white/[0.06] bg-zinc-950/95">
+      <div className="h-[60px] shrink-0 flex items-center gap-2.5 px-2 rounded-2xl border border-white/[0.06] bg-[#1b1b1d]">
         {/* what's open on the phone */}
-        <div className="w-[230px] shrink-0 flex items-center gap-2.5 rounded-xl bg-white/[0.04] border border-white/[0.06] px-2.5 h-[48px]">
+        <div className="w-[230px] shrink-0 flex items-center gap-2.5 rounded-xl bg-white/[0.04] border border-white/[0.06] px-2.5 h-[44px]">
           {front ? <AppIcon app={front} meta={meta} size={30} /> : <span className={cx('size-2.5 rounded-full mx-2.5', ready ? 'bg-zinc-500' : 'bg-zinc-700')} />}
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-zinc-500">{ready && frontIsApp && <span className="size-1.5 rounded-full bg-emerald-400 live-dot" />}On phone now</div>
@@ -31,8 +31,8 @@ export default function AppBar({ apps, meta, focus, ready, dev, err, retry, s, s
 
         {/* game detected → apply controls */}
         {ready && frontIsApp && (game || owned) && (
-          <div className="shrink-0 flex items-center gap-1.5 rounded-xl bg-violet-500/10 border border-violet-400/25 pl-2.5 pr-1.5 h-[48px]">
-            <Gamepad2 size={15} className="text-violet-300" />
+          <div className="shrink-0 flex items-center gap-1.5 rounded-2xl bg-white/[0.07] border border-white/15 pl-2.5 pr-1.5 h-[44px]">
+            <Gamepad2 size={15} className="text-amber-300" />
             <span className="text-[12px] text-zinc-300 mr-1">Game detected</span>
             <Select className="w-[150px]" value={pickMap} onChange={setChoice} options={Object.entries(s.keymaps).map(([k, m]) => [k, m.name])} />
             {applied ? <Button className="h-7" onClick={() => set({ keymapOn: false })}><Check size={12} className="text-emerald-400" />Controls on</Button>
@@ -54,11 +54,11 @@ export default function AppBar({ apps, meta, focus, ready, dev, err, retry, s, s
             ))}
         </div>
 
-        <Button className="h-[48px] px-3 shrink-0" disabled={!apps?.length} onClick={() => setAll(true)}><LayoutGrid size={15} />All apps</Button>
+        <Button className="h-[44px] px-3 shrink-0" disabled={!apps?.length} onClick={() => setAll(true)}><LayoutGrid size={15} />All apps</Button>
       </div>
 
       {all && (
-        <div className="absolute inset-0 z-50 grid place-items-center bg-black/40 backdrop-blur-md" onPointerDown={e => e.target === e.currentTarget && setAll(false)}>
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 backdrop-blur-md" onPointerDown={e => e.target === e.currentTarget && setAll(false)}>
           <div className="w-[860px] max-w-[92vw] h-[600px] max-h-[86vh] flex flex-col rounded-2xl border border-white/15 bg-zinc-900/80 backdrop-blur-2xl shadow-2xl overflow-hidden">
             <div className="h-11 flex items-center gap-2 px-3 border-b border-white/10">
               <div className="flex gap-1.5 mr-2">

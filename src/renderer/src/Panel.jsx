@@ -1,16 +1,16 @@
 // Right-hand panel: Scenes, Sources, per-source properties + grading, and Stream settings.
 import { useEffect, useState } from 'react'
-import { Radio, Layers, Eye, EyeOff, ExternalLink, Plus, Copy, Trash2, ChevronUp, ChevronDown, SlidersHorizontal, Palette, Clapperboard, Image as ImageIcon, Zap, ArrowRight, MessageSquare, Sparkles } from 'lucide-react'
+import { Radio, Layers, Eye, EyeOff, ExternalLink, Plus, Copy, Trash2, ChevronUp, ChevronDown, SlidersHorizontal, Palette, Clapperboard, Image as ImageIcon, Zap, ArrowRight, MessageSquare, Sparkles, Settings2 } from 'lucide-react'
 import { Button, Segmented, Slider, Switch, Select, Input, Row, Section, cx } from './ui'
-import { TYPES, GRADES, PRESETS, grade, newLayer, uid } from './scene'
+import { GRADES, PRESETS, SIZES, grade, uid } from './scene'
 
 const api = window.api
 const mac = api.platform === 'darwin'
 const Color = ({ value, onChange }) => <input type="color" value={value || '#000000'} onChange={e => onChange(e.target.value)} className="h-6 w-10 shrink-0 rounded bg-transparent border border-white/10 p-0.5" />
-const S = ({ label, v, on, min = 0, max = 1, step = 0.01 }) => <Row label={label}><Slider value={v} onChange={on} min={min} max={max} step={step} /></Row>
+const S = ({ label, v, on, min = 0, max = 1, step = 0.01 }) => <div className="flex"><Slider label={label} value={v} onChange={on} min={min} max={max} step={step} /></div>
 const icon = 'p-1 rounded text-zinc-500 hover:text-zinc-100 hover:bg-white/10 disabled:opacity-30'
 
-export default function Panel({ s, set, live, busy, media, sel, setSel, focus, apps, mode, chatBox, goPresets }) {
+export default function Panel({ s, set, live, busy, media, sel, setSel, focus, apps, mode, chatBox, goPresets, addSource }) {
   const [pt, setPt] = useState('source')
   const [tab, setTab] = useState('scene'), [showKey, setShowKey] = useState(false), [screens, setScreens] = useState([])
   const scene = s.scenes.find(x => x.id === s.sceneId) || s.scenes[0]
@@ -30,8 +30,8 @@ export default function Panel({ s, set, live, busy, media, sel, setSel, focus, a
   useEffect(() => { if (l?.type === 'screen') api.invoke('screen:list').then(setScreens).catch(() => {}) }, [l?.id])
 
   return (
-    <aside className={mode ? 'w-full' : 'w-[310px] shrink-0 border-l border-white/[0.06] overflow-y-auto bg-zinc-900/40'}>
-      {!mode && <div className="p-3 pb-0"><Segmented value={tab} onChange={setTab} options={[['scene', 'Scene', Layers], ['chat', 'Chat', MessageSquare], ['stream', 'Stream', Radio]]} /></div>}
+    <aside className={mode ? 'w-full' : 'h-full overflow-y-auto'}>
+      {!mode && <div className="p-3 pb-0"><Segmented value={tab} onChange={setTab} options={[['scene', 'Scene', Layers], ['chat', 'Chat', MessageSquare], ['stream', 'Stream', Radio], ['set', 'Size', Settings2]]} /></div>}
       {!mode && tab === 'chat' && <div className="p-3">{chatBox}</div>}
 
       {!mode && tab === 'scene' && <>
@@ -43,7 +43,7 @@ export default function Panel({ s, set, live, busy, media, sel, setSel, focus, a
           <div className="grid grid-cols-2 gap-1.5">
             {s.scenes.map(x => (
               <button key={x.id} onClick={() => { set({ sceneId: x.id }); setSel('') }}
-                className={cx('h-8 px-2 rounded-md text-[12px] font-medium truncate border', x.id === scene.id ? 'bg-violet-500/20 border-violet-400/50 text-white' : 'bg-white/[0.04] border-white/[0.06] text-zinc-400 hover:text-zinc-100')}>{x.name}</button>
+                className={cx('h-8 px-2 rounded-md text-[12px] font-medium truncate border', x.id === scene.id ? 'bg-white/[0.14] border-white/30 text-white' : 'bg-white/[0.04] border-white/[0.06] text-zinc-400 hover:text-zinc-100')}>{x.name}</button>
             ))}
           </div>
           <Row label="Name"><Input value={scene.name} onChange={e => upScene({ name: e.target.value })} /></Row>
@@ -51,13 +51,13 @@ export default function Panel({ s, set, live, busy, media, sel, setSel, focus, a
         </Section>
 
         <Section icon={Layers} title="Sources">
-          <Select value="" onChange={t => { const n = newLayer(t); upScene({ layers: [...layers, n] }); setSel(n.id) }} options={[['', 'Add source…'], ...TYPES]} />
+          <Button variant="primary" className="w-full h-8" onClick={() => addSource()}><Plus size={13} />Add source</Button>
           <div className="rounded-lg bg-black/30 border border-white/[0.06] p-1 min-h-9">
             {layers.length === 0 && <div className="py-2 text-center text-[12px] text-zinc-600">Empty scene</div>}
             {[...layers].reverse().map(x => (
               <div key={x.id} onClick={() => setSel(x.id)} className={cx('group flex items-center gap-1 rounded-md pl-1 pr-0.5 h-7', x.id === sel ? 'bg-violet-500/20' : 'hover:bg-white/5')}>
                 <button className={icon} onClick={e => { e.stopPropagation(); upScene({ layers: layers.map(y => y.id === x.id ? { ...y, visible: !y.visible } : y) }) }}>{x.visible ? <Eye size={12} /> : <EyeOff size={12} />}</button>
-                <span className={cx('flex-1 truncate text-[12px]', !x.visible && 'text-zinc-600')}>{x.name}</span>
+                <span className={cx('flex-1 truncate text-[12px]', !x.visible && 'text-zinc-600')}>{x.name}{x.bgOnly && <span className="ml-1.5 rounded bg-white/10 px-1 text-[9px] text-zinc-400">BACKDROP</span>}</span>
                 <button className={icon} onClick={e => { e.stopPropagation(); move(x.id, 1) }}><ChevronUp size={12} /></button>
                 <button className={icon} onClick={e => { e.stopPropagation(); move(x.id, -1) }}><ChevronDown size={12} /></button>
                 <button className={icon} onClick={e => { e.stopPropagation(); upScene({ layers: layers.filter(y => y.id !== x.id) }) }}><Trash2 size={12} /></button>
@@ -101,7 +101,7 @@ export default function Panel({ s, set, live, busy, media, sel, setSel, focus, a
             </>}{pt === 'style' && <>
             <S label="Opacity" v={l.opacity} on={opacity => up({ opacity })} />
             <S label="Corner radius" v={l.radius} on={radius => up({ radius })} max={0.5} />
-            <Row label="Border"><Slider value={l.border} onChange={border => up({ border })} max={24} step={1} /><Color value={l.borderColor} onChange={borderColor => up({ borderColor })} /></Row>
+            <div className="flex items-center gap-2"><Slider label="Border" value={l.border} onChange={border => up({ border })} max={24} step={1} /><Color value={l.borderColor} onChange={borderColor => up({ borderColor })} /></div>
             <S label="Shadow" v={l.shadow} on={shadow => up({ shadow })} />
             {isMedia && ['Crop left', 'Crop top', 'Crop right', 'Crop bottom'].map((t, i) =>
               <S key={t} label={t} v={l.crop[i]} on={v => up({ crop: l.crop.map((c, j) => j === i ? v : c) })} max={0.45} />)}
@@ -122,7 +122,9 @@ export default function Panel({ s, set, live, busy, media, sel, setSel, focus, a
         <Section icon={Palette} title="Background">
           <Row label="Color"><Color value={scene.bg} onChange={bg => upScene({ bg })} /></Row>
           <Row label="Gradient to"><Color value={scene.bg2 || scene.bg} onChange={bg2 => upScene({ bg2 })} /><Switch checked={!!scene.bg2} onChange={v => upScene({ bg2: v ? '#7c3aed' : '' })} /></Row>
-          <Row label="Blurred phone"><Switch checked={scene.bgBlur} onChange={bgBlur => upScene({ bgBlur })} /></Row>
+          <Row label="Blurred backdrop"><Switch checked={scene.bgBlur} onChange={bgBlur => upScene({ bgBlur })} /></Row>
+          {scene.bgBlur && <Row label="Blur from"><Select className="flex-1" value={layers.some(x => x.id === scene.bgSrc) ? scene.bgSrc : ''} onChange={v => v === '__pick' ? addSource('bg') : upScene({ bgSrc: v })}
+            options={[['', 'Phone'], ...layers.filter(x => ['webcam', 'screen', 'image', 'video', 'browser'].includes(x.type)).map(x => [x.id, x.name]), ['__pick', 'Choose a screen or window…']]} /></Row>}
         </Section>
       </>}
 
@@ -171,8 +173,6 @@ export default function Panel({ s, set, live, busy, media, sel, setSel, focus, a
               <ExternalLink size={11} />Get your key in YouTube Studio
             </button>
           )}
-          <Row label="Canvas"><Select className="flex-1" disabled={busy} value={s.canvas} onChange={c => set({ canvas: c })}
-            options={[['1920x1080', 'Landscape 1080p'], ['1280x720', 'Landscape 720p'], ['1080x1920', 'Vertical 1080×1920']]} /></Row>
           <Row label="Bitrate"><Select className="flex-1" disabled={!!live} value={s.bitrate} onChange={bitrate => set({ bitrate })}
             options={[[2500, '2500 kbps · 720p'], [4500, '4500 kbps · 1080p'], [6000, '6000 kbps · 1080p'], [9000, '9000 kbps · 1080p60']]} /></Row>
           <Row label="Frame rate"><Select className="flex-1" disabled={busy} value={s.fps} onChange={fps => set({ fps: +fps })} options={[[30, '30 fps'], [60, '60 fps']]} /></Row>
@@ -180,6 +180,24 @@ export default function Panel({ s, set, live, busy, media, sel, setSel, focus, a
             options={[...(mac ? [['hw', 'Hardware (VideoToolbox)']] : []), ['x264', 'Software (x264)']]} /></Row>
         </Section>
       )}
+
+      {!mode && tab === 'set' && (() => { const [cw, ch] = s.canvas.split('x'); return (
+        <Section icon={Settings2} title="Scene size">
+          <p className="text-[11px] leading-relaxed text-zinc-500">The size of the whole picture you stream and record. Every scene uses it.{busy ? ' Stop the stream or recording to change it.' : ''}</p>
+          <div className={cx('grid grid-cols-2 gap-1.5', busy && 'opacity-40 pointer-events-none')}>
+            {SIZES.map(([v, name, sub]) => { const [w, h] = v.split('x').map(Number), k = 26 / Math.max(w, h); return (
+              <button key={v} onClick={() => set({ canvas: v })} className={cx('flex items-center gap-2.5 rounded-xl border p-2 text-left transition-all duration-200', v === s.canvas ? 'bg-white/[0.14] border-white/30' : 'bg-white/[0.04] border-white/[0.06] hover:bg-white/[0.08]')}>
+                <span className="size-8 shrink-0 grid place-items-center"><span className={cx('rounded-[3px] border', v === s.canvas ? 'border-white bg-white/30' : 'border-zinc-500')} style={{ width: w * k, height: h * k }} /></span>
+                <span className="min-w-0"><span className="block truncate text-[12px] font-medium text-zinc-100">{name}</span><span className="block truncate text-[10px] text-zinc-500">{sub} · {w}×{h}</span></span>
+              </button>) })}
+          </div>
+          <Row label="Custom size">
+            <Input key={'w' + s.canvas} disabled={busy} defaultValue={cw} onBlur={e => { const n = Math.round(+e.target.value / 2) * 2; if (n >= 240 && n <= 3840) set({ canvas: n + 'x' + ch }) }} onKeyDown={e => e.key === 'Enter' && e.target.blur()} />
+            <span className="text-zinc-500">×</span>
+            <Input key={'h' + s.canvas} disabled={busy} defaultValue={ch} onBlur={e => { const n = Math.round(+e.target.value / 2) * 2; if (n >= 240 && n <= 3840) set({ canvas: cw + 'x' + n }) }} onKeyDown={e => e.key === 'Enter' && e.target.blur()} />
+          </Row>
+          <Row label="Frame rate"><Select className="flex-1" disabled={busy} value={s.fps} onChange={fps => set({ fps: +fps })} options={[[30, '30 fps'], [60, '60 fps']]} /></Row>
+        </Section>) })()}
     </aside>
   )
 }

@@ -62,3 +62,10 @@ export const PRESETS = {
 export const patchLayer = (s, id, p) => ({
   scenes: s.scenes.map(sc => sc.id !== s.sceneId ? sc : { ...sc, layers: sc.layers.map(l => l.id === id ? { ...l, ...p } : l) })
 })
+
+// Canvas (whole scene) sizes for each platform.
+export const SIZES = [
+  ['1920x1080', 'YouTube / Twitch', '16:9 · 1080p'], ['1280x720', 'YouTube 720p', '16:9 · 720p'], ['2560x1440', 'YouTube 1440p', '16:9 · 2K'],
+  ['1080x1920', 'Shorts · TikTok · Reels', '9:16 vertical'], ['720x1280', 'Vertical 720p', '9:16 · light'], ['1080x1350', 'Instagram portrait', '4:5 feed'],
+  ['1080x1080', 'Instagram square', '1:1'], ['1080x2400', 'Phone (tall)', '9:20 portrait'], ['2400x1080', 'Phone (wide)', '20:9 landscape'], ['1440x1080', 'Classic', '4:3']
+]

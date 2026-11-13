@@ -39,7 +39,7 @@ export default function Device({ devices, serial, setSerial, ready, focus, apps,
 
       <div className="flex gap-2 mb-5 flex-wrap">
         {devices.map(d => (
-          <button key={d.serial} onClick={() => setSerial(d.serial)} className={cx('flex items-center gap-2 h-9 px-3 rounded-lg border text-[12px]', d.serial === serial ? 'bg-violet-500/15 border-violet-400/50 text-white' : 'border-white/[0.08] text-zinc-400 hover:text-white')}>
+          <button key={d.serial} onClick={() => setSerial(d.serial)} className={cx('flex items-center gap-2 h-9 px-3 rounded-lg border text-[12px]', d.serial === serial ? 'bg-white/[0.14] border-white/30 text-white' : 'border-white/[0.08] text-zinc-400 hover:text-white')}>
             {d.wifi ? <Wifi size={13} /> : <Usb size={13} />}{d.model}<span className={cx('size-1.5 rounded-full', d.state === 'device' ? 'bg-emerald-400' : 'bg-amber-400')} />
           </button>
         ))}

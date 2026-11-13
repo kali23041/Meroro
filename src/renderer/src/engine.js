@@ -172,14 +172,15 @@ export class Engine {
     ctx.fillStyle = sc.bg
     if (sc.bg2) { const g = ctx.createLinearGradient(0, 0, W, H); g.addColorStop(0, sc.bg); g.addColorStop(1, sc.bg2); ctx.fillStyle = g }
     ctx.fillRect(0, 0, W, H)
-    if (sc.bgBlur && f && !this.hidden) {
-      const fw = f.displayWidth, fh = f.displayHeight, c = Math.max(W / fw, H / fh) * 1.15
+    const bl = sc.bgSrc && sc.layers.find(l => l.id === sc.bgSrc), b = sc.bgBlur && (bl ? this.media(bl) : f && !this.hidden ? [f, f.displayWidth, f.displayHeight] : null)
+    if (b) { // blurred backdrop from the phone or any chosen source
+      const [img, fw, fh] = b, c = Math.max(W / fw, H / fh) * 1.15
       ctx.filter = `blur(${Math.round(H * 0.04)}px) brightness(0.5)`
-      ctx.drawImage(f, (W - fw * c) / 2, (H - fh * c) / 2, fw * c, fh * c)
+      ctx.drawImage(img, (W - fw * c) / 2, (H - fh * c) / 2, fw * c, fh * c)
       ctx.filter = 'none'
     }
     this.geo = {}
-    for (const l of sc.layers) if (l.visible) this.layer(l, W, H)
+    for (const l of sc.layers) if (l.visible && !l.bgOnly) this.layer(l, W, H)
     if (this.alerting && !sc.layers.some(l => l.visible && l.type === 'alert')) { // no alert source in this scene: show it top-centre anyway
       const w = W * 0.5, h = Math.min(H * 0.14, w * 0.26), x = (W - w) / 2, y = H * 0.06
       ctx.save(); ctx.beginPath(); ctx.roundRect(x, y, w, h, h * 0.3); ctx.clip(); this.drawAlert(x, y, w, h); ctx.restore()
