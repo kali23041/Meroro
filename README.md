@@ -83,9 +83,28 @@ YouTube Live over RTMPS (or any RTMP server), with **VideoToolbox** hardware enc
 
 Gaming presets also set the capture and stream to 60 fps and 9000 kbps.
 
+### 🎯 Supported games
+
+Each of these has a ready-made key map and streaming preset. Any other Android game works with the *Generic shooter*, *Racing* or *MOBA* key maps, or a map you build yourself.
+
+| Game | Key map | Stream preset | Get it |
+|---|---|---|---|
+| **BGMI** (Battlegrounds Mobile India) | WASD + Shift sprint, mouse aim, peek, lean, heal, grenade, vehicle | Fullscreen + facecam · Clean · Title frame · Shorts | [Google Play](https://play.google.com/store/apps/details?id=com.pubg.imobile) |
+| **Free Fire MAX** | WASD, mouse aim, gloo wall, skill, med kit | Fullscreen + facecam | [Google Play](https://play.google.com/store/apps/details?id=com.dts.freefiremax) |
+| **Call of Duty: Mobile** | WASD, mouse aim, slide, lethal, tactical, operator skill, scorestreak | Fullscreen + facecam | [Google Play](https://play.google.com/store/apps/details?id=com.activision.callofduty.shooter) |
+| Racing games | Steer, gas, brake, nitro, drift | Any | — |
+| MOBA games | Move stick, attack, skills 1–3, recall, heal | Any | — |
+
+<img src="docs/screenshots/keys.png" alt="Key mapping editor with the BGMI layout" width="100%" />
+<p align="center"><sub><b>Key mapping</b>: drag each marker onto the game's button. Maps switch automatically when the game opens.</sub></p>
+
 ## Screenshots
 
 <table>
+<tr>
+<td width="50%"><img src="docs/screenshots/presets.png" alt="Preset gallery" /><p align="center"><sub><b>Preset gallery</b>: previews for every scene, in Gaming, Vertical and Studio tabs</sub></p></td>
+<td width="50%"><img src="docs/screenshots/studio.png" alt="Studio" /><p align="center"><sub><b>Studio</b>: scenes, sources, mixer and live stats</sub></p></td>
+</tr>
 <tr>
 <td width="50%"><img src="docs/screenshots/vertical.png" alt="Vertical 9:16 scene" /><p align="center"><sub><b>Vertical streaming</b>: 1080×1920 canvas for Shorts and Reels</sub></p></td>
 <td width="50%"><img src="docs/screenshots/auto.png" alt="Auto scene switching" /><p align="center"><sub><b>Auto scene switching</b>: rules follow the app on the phone</sub></p></td>
