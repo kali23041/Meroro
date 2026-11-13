@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, safeStorage, shell, systemPreferences, powerSaveBlocker, dialog, desktopCapturer, session as esession } from 'electron'
 import { readFile } from 'node:fs/promises'
+import { createConnection } from 'node:net'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { spawn, execFile } from 'node:child_process'
@@ -52,8 +53,25 @@ ipcMain.on('settings:set', (_, s) => {
 ipcMain.handle('devices', () => listDevices())
 // ---- wireless adb: adb exits 0 even on failure, so the output text decides ----
 const hostPort = (a, port) => { a = a.trim().replace(/^adb\s+(connect|pair)\s+/, ''); return /:\d+$/.test(a) ? a : `${a}:${port}` }
+// macOS Local Network privacy: the adb server inherits the permission of whichever app started it.
+// If Meroro itself can reach the phone but adb can't, restart adb from Meroro so it gets the permission.
+const probe = (host, port) => new Promise(r => {
+  const c = createConnection({ host, port, timeout: 3000 })
+  c.on('connect', () => { c.destroy(); r('ok') }); c.on('timeout', () => { c.destroy(); r('timeout') }); c.on('error', e => r(e.code))
+})
+async function adbConnect(addr, timeout = 12000) {
+  let out = (await adb(['connect', addr], { timeout }).catch(e => e.message)).trim()
+  if (mac && /No route to host/.test(out) && !session) {
+    const i = addr.lastIndexOf(':')
+    if (await probe(addr.slice(0, i), +addr.slice(i + 1)) === 'ok') {
+      await adb(['kill-server']).catch(() => {}); await adb(['start-server']).catch(() => {})
+      out = (await adb(['connect', addr], { timeout }).catch(e => e.message)).trim()
+    }
+  }
+  return out
+}
 ipcMain.handle('adb:connect', async (_, addr) => {
-  const out = (await adb(['connect', hostPort(addr, 5555)], { timeout: 12000 })).trim()
+  const out = await adbConnect(hostPort(addr, 5555))
   if (/No route to host/.test(out) && mac) throw new Error('macOS is blocking Meroro from your local network. Open System Settings → Privacy & Security → Local Network, turn on Meroro, then restart Meroro.')
   if (!/connected to/.test(out)) throw new Error(/refused|timed out|No route/i.test(out) ? `${out}. On Android 11+ use the IP address & port shown under Wireless debugging (it is not 5555), and pair first if this Mac is new.` : out)
   return out
@@ -77,7 +95,7 @@ ipcMain.handle('adb:wireless', async (_, serial) => { // USB phone → Wi-Fi wit
   let last = ''
   for (let i = 0; i < 20; i++) { // phones take a few seconds to restart adb in network mode
     await new Promise(r => setTimeout(r, 1000))
-    const out = (await adb(['connect', `${ip}:5555`], { timeout: 6000 }).catch(e => e.message)).trim()
+    const out = await adbConnect(`${ip}:5555`, 6000)
     if (/connected to/.test(out)) return `Connected over Wi-Fi (${ip}:5555). You can unplug the cable.`
     last = out
   }

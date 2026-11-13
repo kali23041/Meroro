@@ -47,6 +47,7 @@ export default function Wireless({ serial, usbReady, compact }) {
       {st && <div className={cx('flex gap-1.5 text-[11px] leading-snug', st.bad ? 'text-red-400' : st.ok ? 'text-emerald-400' : 'text-zinc-400')}>
         {st.busy ? <Loader2 size={12} className="animate-spin shrink-0 mt-px" /> : st.bad ? <AlertTriangle size={12} className="shrink-0 mt-px" /> : <Check size={12} className="shrink-0 mt-px" />}<span>{st.text}</span>
       </div>}
+      {st?.bad && /Local Network/.test(st.text) && <Button className="w-full" onClick={() => api.invoke('perm:open', 'network')}>Open Local Network settings</Button>}
       <p className="text-[11px] leading-relaxed text-zinc-500">
         {tab === 'pair' ? 'On the phone: Developer options → Wireless debugging → Pair device with pairing code. Enter the IP:port and 6-digit code shown there.'
           : 'Phone: Developer options → Wireless debugging → use the “IP address & Port” shown there. New computer? Pair first.'}
