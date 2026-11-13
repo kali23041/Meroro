@@ -12,6 +12,7 @@ import Device from './Device'
 import Wireless from './Wireless'
 import { Home, Presets, Automation, ChatBox, Quick } from './Pages'
 import Keys from './Keys'
+import AppBar from './AppBar'
 import { KEYMAPS, Mapper, combo } from './keymap'
 import { PRESETS, patchLayer, newLayer } from './scene'
 import { Button, Segmented, Slider, Switch, Select, Input, Row, Section, cx } from './ui'
@@ -163,7 +164,8 @@ export default function App() {
   const dev = devices.find(d => d.serial === serial)
   const ready = dev?.state === 'device'
   useEffect(() => { if (!dev) setSerial(devices.find(d => d.state === 'device')?.serial || devices[0]?.serial || '') }, [devices])
-  const loadApps = () => { setApps(null); if (ready) api.invoke('apps', serial).then(setApps).catch(() => setApps([])) }
+  const [appsErr, setAppsErr] = useState('')
+  const loadApps = () => { setApps(null); setAppsErr(''); if (ready) api.invoke('apps', serial).then(setApps).catch(e => { setApps([]); setAppsErr(clean(e)) }) }
   useEffect(loadApps, [serial, ready])
   const meta = useMeta(apps)
 
@@ -253,6 +255,10 @@ export default function App() {
     try { setChatSt({ on: true, title: (await api.invoke('chat:start', s.chatUrl)).title }) } catch (e) { setChatSt({ err: clean(e) }) }
   }
   const applyPreset = name => { const r = PRESETS[name](); set({ scenes: [...s.scenes, r.scene], sceneId: r.scene.id, ...(live || rec ? {} : r.set) }); setSel(''); setView('studio') }
+  const pickApp = pkg => { // dock / All apps: open the app on the phone and make it the streamed app
+    api.invoke('app:action', serial, pkg, 'launch').catch(() => {})
+    if (cap === 'on' && s.mode === 'app' && s.appMode === 'guard') set({ pkg }); else source({ mode: 'app', pkg })
+  }
   const onStream = pkg => { setView('studio'); if (cap === 'on' && s.mode === 'app' && s.appMode === 'guard') { set({ pkg }); api.send('ctl', { t: 'app', pkg }) } else source({ mode: 'app', pkg }) }
   const qa = {
     s, set, cap, live, rec, ready, start: () => start(), stop: () => api.invoke('session:stop'), goLive: () => goLive(), record: () => record(),
@@ -375,7 +381,7 @@ export default function App() {
           <button onClick={() => setAbout(true)} title="About" className="w-12 h-12 rounded-xl grid place-items-center hover:bg-white/5"><Logo size={22} /></button>
         </nav>
         {view === 'home' && <Home q={qa} dev={dev} front={apps?.find(a => a.pkg === focus)}
-          lib={{ apps, meta, serial, ready, focus, picked: s.mode === 'app' ? s.pkg : '', reload: loadApps, onStream }} />}
+          lib={{ apps, meta, serial, ready, focus, picked: s.mode === 'app' ? s.pkg : '', reload: loadApps, onStream, err: appsErr }} />}
         {view === 'presets' && <Presets apply={applyPreset} busy={busy} />}
         {view === 'auto' && <Automation s={s} set={set} chatBox={<ChatBox tall s={s} set={set} chat={chat} st={chatSt} go={chatGo} />} stopSound={() => eng.current.stopSound()}
           test={r => act(r, { author: 'Test viewer', amount: '₹100', text: 'Great stream!' })}
@@ -415,17 +421,6 @@ export default function App() {
                   ? 'Moves the app to a private virtual display: it leaves the phone screen and you control it from this preview.'
                   : 'Play on the phone as usual. Viewers see only the selected app — anything else (home screen, other apps, notifications) is covered.'}
               </p>
-              {ready && focus && (
-                <div className="flex items-center gap-2 rounded-lg bg-white/[0.04] border border-white/[0.06] p-2">
-                  <span className={cx('size-2 rounded-full shrink-0', frontIsApp ? 'bg-emerald-400 live-dot' : 'bg-zinc-600')} />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[10px] uppercase tracking-wider text-zinc-500">On phone now</div>
-                    <div className="truncate text-[12px] font-medium">{front?.name || (frontIsApp ? focus : 'Home screen')}</div>
-                  </div>
-                  {focus === s.pkg ? <span className="text-[11px] text-emerald-400 shrink-0">Selected</span>
-                    : frontIsApp && <Button variant="primary" className="shrink-0" onClick={() => pick(focus)}>Stream this</Button>}
-                </div>
-              )}
               {s.appMode === 'virtual' && (
                 <Row label="Display"><Select className="flex-1" value={s.vdisplay} onChange={vdisplay => source({ vdisplay })}
                   options={[['', 'Same as phone'], ['1920x1080/280', 'Landscape 1080p'], ['1080x1920/420', 'Portrait 1080p']]} /></Row>
@@ -536,6 +531,7 @@ export default function App() {
           setS(o => ({ ...o, scenes: o.scenes.map(sc => sc.id !== o.sceneId ? sc : { ...sc, layers: [...sc.layers, n] }) }))
         }} />}
       </div>
+      <AppBar apps={apps} meta={meta} focus={focus} ready={ready} dev={dev} err={appsErr} retry={loadApps} s={s} set={set} pickApp={pickApp} openKeys={() => setView('keys')} />
     </div>
   )
 }

@@ -36,13 +36,24 @@ export async function listDevices() {
   return all.filter(d => !(d.wifi && all.some(u => !u.wifi && d.serial.includes(u.serial))))
 }
 
+const SYSTEM = /^(android|com\.android|com\.samsung|com\.sec|com\.qualcomm|com\.qti|com\.google\.android\.(gms|gsf|setupwizard|packageinstaller|permissioncontroller|providers|ext|overlay)|com\.monotype|com\.knox|com\.osp|com\.skms|com\.wssyncmldm|com\.policydm|vendor\.)/
+
 export async function listApps(serial) {
-  const out = await adb(await serverCmd(serial, ['list_apps=true']), { timeout: 90000 })
+  let out = ''
+  try { out = await adb(await serverCmd(serial, ['list_apps=true']), { timeout: 90000 }) } catch {}
   const apps = []
   for (const l of out.split('\n')) {
     const m = l.match(/^\s*([*-])\s+(.+?)\s+(\S+)\s*$/)
-    if (m) apps.push({ name: m[2], pkg: m[3], system: m[1] === '-' })
+    if (m) apps.push({ name: m[2], pkg: m[3], system: m[1] === '-' && SYSTEM.test(m[3]) }) // scrcpy's flag marks preinstalled apps (even BGMI, WhatsApp) as system
   }
+  if (!apps.length) { // fallback: package manager (no labels, so names are made from package ids)
+    const nice = p => p.split('.').filter(w => !/^(com|android|app|apps|org|net|in|co|google|samsung|sec)$/.test(w)).pop() || p
+    for (const [flag, system] of [['-3', false], ['-s', true]]) {
+      const pm = await adb(['-s', serial, 'shell', 'pm', 'list', 'packages', flag], { timeout: 20000 })
+      for (const l of pm.split('\n')) { const pkg = l.replace('package:', '').trim(); if (pkg) apps.push({ name: nice(pkg).replace(/^./, c => c.toUpperCase()), pkg, system }) }
+    }
+  }
+  if (!apps.length) throw new Error('The phone returned no apps. Unlock it and try again.')
   return apps.sort((a, b) => a.system - b.system || a.name.localeCompare(b.name))
 }
 

@@ -36,7 +36,7 @@ export function AppIcon({ app, meta, size = 40 }) {
       style={{ width: size, height: size, fontSize: size * 0.42, background: `linear-gradient(135deg,hsl(${hue(app.pkg)} 60% 50%),hsl(${hue(app.pkg) + 40} 60% 38%))` }}>{app.name[0]?.toUpperCase()}</span>
 }
 
-export default function Library({ apps, meta, serial, ready, focus, picked, onStream, reload }) {
+export default function Library({ apps, meta, serial, ready, focus, picked, onStream, reload, err }) {
   const [q, setQ] = useState(''), [filter, setFilter] = useState('apps'), [sel, setSel] = useState(''), [info, setInfo] = useState(null), [busy, setBusy] = useState('')
   const isGame = a => meta[a.pkg]?.cat?.startsWith('GAME')
   const list = (apps || []).filter(a => (filter === 'system' ? a.system : !a.system) && (filter !== 'games' || isGame(a)) && (a.name + a.pkg).toLowerCase().includes(q.toLowerCase()))
@@ -62,7 +62,8 @@ export default function Library({ apps, meta, serial, ready, focus, picked, onSt
         </div>
         <div className="flex-1 overflow-y-auto px-6 pb-6">
           {ready && apps === null && <div className="py-20 text-center text-zinc-500">Reading apps from your phone…</div>}
-          {ready && apps && !list.length && <div className="py-20 text-center text-zinc-500">{filter === 'games' ? 'No games found yet. Categories load with the icons.' : 'No apps match.'}</div>}
+          {err && <div className="py-16 text-center text-red-400">Couldn't read apps: {err}<div className="mt-3"><Button onClick={reload}>Retry</Button></div></div>}
+          {ready && apps && !list.length && !err && <div className="py-20 text-center text-zinc-500">{filter === 'games' ? 'No games found yet. Categories load with the icons.' : 'No apps match.'}</div>}
           <div className="grid grid-cols-[repeat(auto-fill,minmax(112px,1fr))] gap-2">
             {list.map(a => (
               <button key={a.pkg} onClick={() => setSel(a.pkg)} onDoubleClick={() => onStream(a.pkg)}
