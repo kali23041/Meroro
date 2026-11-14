@@ -4,12 +4,12 @@ import { createConnection } from 'node:net'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { spawn, execFile } from 'node:child_process'
-import { readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, unlinkSync, existsSync } from 'node:fs'
 import { splashWindow } from './splash'
 import { BRAND } from '../shared/brand'
 import { Chat } from './chat'
 import { iosUsb, iosStart, iosStop, stopWatch, uxplayPath, installUxplay } from './ios'
-import { adb, listDevices, listApps, foreground, deviceInfo, overlayApps, cleanOn, cleanOff, perf, appInfo, appAction, screenshot, Session, FFMPEG } from './phone'
+import { adb, listDevices, listApps, foreground, deviceInfo, overlayApps, cleanOn, cleanOff, perf, appInfo, appAction, screenshot, Session, FFMPEG, ADB } from './phone'
 
 const mac = process.platform === 'darwin'
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
@@ -29,11 +29,27 @@ function createWindow() {
     webPreferences: { preload: join(__dirname, '../preload/index.js'), backgroundThrottling: false }
   })
   win.setAspectRatio(2000 / 979) // the studio layout is designed for this shape; resizing keeps it
-  win.once('ready-to-show', () => setTimeout(() => { splash?.destroy(); win.show(); win.focus() }, splash ? Math.max(0, 1600 - (Date.now() - t0)) : 0))
+  // splash shows the real start-up work; the studio opens once it's done (at least 1.6 s so the card can be read, at most 9 s)
+  const setup = splash ? bootSteps(splash.step) : Promise.resolve()
+  const loaded = new Promise(r => win.once('ready-to-show', r))
+  splash?.step(3, 'run'); loaded.then(() => splash?.step(3, 'ok', 'ready'))
+  Promise.race([Promise.all([setup, loaded]), new Promise(r => setTimeout(r, 9000))]).then(() => loaded)
+    .then(() => setTimeout(() => { splash?.destroy(); win.show(); win.focus() }, splash ? Math.max(350, 1600 - (Date.now() - t0)) : 0))
   if (!app.isPackaged && process.env.MERORO_TEST) createRequire(__filename)(process.env.MERORO_TEST)({ win, send, app }) // dev self-test hook
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' } })
   if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL)
   else win.loadFile(join(__dirname, '../renderer/index.html'))
+}
+
+async function bootSteps(step) {
+  step(0, 'run')
+  const miss = [['adb', ADB], ['ffmpeg', FFMPEG]].filter(([, f]) => !existsSync(f)).map(([n]) => n)
+  step(0, miss.length ? 'warn' : 'ok', miss.length ? miss.join(', ') + ' missing' : 'all found')
+  step(1, 'run')
+  try { await adb(['start-server']); step(1, 'ok', 'running') } catch { step(1, 'warn', 'not started') }
+  step(2, 'run')
+  try { const n = (await listDevices()).filter(d => d.state === 'device').length; step(2, 'ok', n ? n + (n > 1 ? ' phones' : ' phone') + ' found' : 'none plugged in') }
+  catch { step(2, 'warn', 'none found') }
 }
 
 // ---- settings (stream key is encrypted with the OS keychain) ----

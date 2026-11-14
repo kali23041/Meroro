@@ -21,6 +21,7 @@ import { SourceDialog, SceneDialog, FloatChat } from './Dialogs'
 import Device from './Device'
 import Wireless from './Wireless'
 import { AutoPanel, ChatBox, Quick } from './Pages'
+import HeaderBar from './HeaderBar'
 import PresetPicker from './PresetPicker'
 import Keys, { KeyHints } from './Keys'
 import { KEYMAPS, MAP_DEFAULTS, Mapper, combo, matchTrigger } from './keymap'
@@ -528,8 +529,9 @@ export default function App() {
           <Logo size={22} /><span className="text-[15px] font-extrabold tracking-tight text-white">Meroro</span><span className="text-[11px] text-zinc-500">by Kartik Sabale</span>
         </button>
         <div className="flex-1" />
+        {view === 'studio' && <HeaderBar q={qa} eng={eng} toggleKeys={() => s.keymapOn ? set({ keymapOn: false }) : bindMap(ctlApp?.pkg, km === s.keymaps[s.keymapId] ? s.keymapId : Object.keys(s.keymaps)[0])} />}
         {upd && <button className="no-drag h-7 px-3 rounded-full bg-orange-500 text-black text-[12px] font-semibold" onClick={() => setView('new')}>Update {upd.version} available</button>}
-        {view === 'studio' && JSON.stringify(lay) !== JSON.stringify(DEF.layout) && <Button variant="ghost" className="no-drag" onClick={() => set({ layout: DEF.layout })}><LayoutDashboard size={13} />Reset layout</Button>}
+        {view === 'studio' && JSON.stringify(lay) !== JSON.stringify(DEF.layout) && <Button variant="ghost" className="no-drag px-2" title="Reset layout" onClick={() => set({ layout: DEF.layout })}><LayoutDashboard size={13} /></Button>}
         {note && (
           <div className={cx('no-drag pop min-w-0 max-w-[46%] flex items-center gap-1.5 rounded-full bg-white/[0.06] border border-white/[0.08] pl-2.5 pr-1 h-7 text-[12px]', note.bad ? 'text-red-400' : 'text-zinc-300')}>
             <Info size={13} className="shrink-0" /><span className="truncate">{note.text}</span>
