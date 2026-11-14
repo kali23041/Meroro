@@ -24,6 +24,7 @@ export class Chat {
     const key = html.match(/"INNERTUBE_API_KEY":"([^"]+)"/)?.[1], ver = html.match(/"INNERTUBE_CLIENT_VERSION":"([^"]+)"/)?.[1]
     let cont = html.match(/"liveChatRenderer":\{"continuations":\[\{"reloadContinuationData":\{"continuation":"([^"]+)"/)?.[1]
     if (!key || !cont) throw new Error('No live chat found. Paste the link of a stream that is live right now.')
+    this.info = { key, ver, vid: html.match(/"videoId":"([\w-]{11})"/)?.[1] || url.match(/v=([\w-]{11})/)?.[1] }
     const token = this.token = {}
     ;(async () => {
       for (let first = true; this.token === token; first = false) {

@@ -229,3 +229,39 @@ export class Session {
     this.emit('end', error || null)
   }
 }
+
+// ---------- Clean screen: hide notifications, pop-ups and on-top overlays while streaming ----------
+// Everything changed is recorded, so turning it off puts the phone back exactly as it was.
+const sh = (serial, cmd, timeout = 8000) => adb(['-s', serial, 'shell', cmd], { timeout }).catch(() => '')
+const SAMSUNG = [['system', 'game_no_interruption', '1'], ['secure', 'game_show_floating_icon', '0'], ['secure', 'game_bixby_block', '1'], ['secure', 'game_edgescreen_touch_lock', '1']]
+const ZEN = { 0: 'off', 1: 'priority', 2: 'on', 3: 'alarms' }
+
+export async function overlayApps(serial) {
+  return (await sh(serial, 'appops query-op SYSTEM_ALERT_WINDOW allow')).split('\n').map(s => s.trim()).filter(x => /^[\w.]+$/.test(x))
+}
+
+export async function cleanOn(serial, o) {
+  const saved = { denied: [], samsung: [] }
+  if (o.dnd) { saved.zen = +(await sh(serial, 'settings get global zen_mode')).trim() || 0; await sh(serial, 'cmd notification set_dnd priority') }
+  if (o.headsUp) { saved.headsUp = (await sh(serial, 'settings get global heads_up_notifications_enabled')).trim(); await sh(serial, 'settings put global heads_up_notifications_enabled 0') }
+  if (o.overlays) {
+    saved.denied = (await overlayApps(serial)).filter(p => !(o.keep || []).includes(p))
+    saved.uid = {}
+    for (const p of saved.denied) saved.uid[p] = (await sh(serial, `appops get --uid ${p} SYSTEM_ALERT_WINDOW`)).match(/SYSTEM_ALERT_WINDOW: (\w+)/)?.[1] || 'default'
+    // both the package and its uid: some phones check the uid mode first. Overlays already on screen are hidden right away.
+    if (saved.denied.length) await sh(serial, saved.denied.map(p => `appops set ${p} SYSTEM_ALERT_WINDOW deny; appops set --uid ${p} SYSTEM_ALERT_WINDOW deny`).join('; '))
+  }
+  if (o.samsung) for (const [ns, k, v] of SAMSUNG) {
+    const old = (await sh(serial, `settings get ${ns} ${k}`)).trim()
+    if (old && old !== 'null' && old !== v) { saved.samsung.push([ns, k, old]); await sh(serial, `settings put ${ns} ${k} ${v}`) }
+  }
+  return saved
+}
+
+export async function cleanOff(serial, saved) {
+  if (!saved) return
+  if (saved.zen != null) await sh(serial, `cmd notification set_dnd ${ZEN[saved.zen] || 'off'}`)
+  if (saved.headsUp && saved.headsUp !== 'null') await sh(serial, `settings put global heads_up_notifications_enabled ${saved.headsUp}`)
+  if (saved.denied?.length) await sh(serial, saved.denied.map(p => `appops set ${p} SYSTEM_ALERT_WINDOW allow; appops set --uid ${p} SYSTEM_ALERT_WINDOW ${saved.uid?.[p] || 'allow'}`).join('; '))
+  for (const [ns, k, v] of saved.samsung || []) await sh(serial, `settings put ${ns} ${k} ${v}`)
+}

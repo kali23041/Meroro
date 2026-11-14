@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Radio, Layers, Eye, EyeOff, ExternalLink, Plus, Copy, Trash2, ChevronUp, ChevronDown, SlidersHorizontal, Palette, Clapperboard, Image as ImageIcon, Zap, ArrowRight, MessageSquare, Sparkles, Settings2 } from 'lucide-react'
 import { Button, Segmented, Slider, Switch, Select, Input, Row, Section, cx } from './ui'
 import { GRADES, PRESETS, SIZES, grade, uid } from './scene'
+import { parseCube, setLut } from './gpu'
 
 const api = window.api
 const mac = api.platform === 'darwin'
@@ -18,6 +19,7 @@ export default function Panel({ s, set, live, busy, media, sel, setSel, focus, a
   const layers = scene.layers, l = layers.find(x => x.id === sel)
   const up = p => upScene({ layers: layers.map(x => x.id === l.id ? { ...x, ...p } : x) })
   const upG = p => up({ grade: { ...l.grade, ...p } })
+  const upF = p => up({ fx: { ...l.fx, ...p } })
   const move = (id, d) => { // d = +1 towards the top
     const i = layers.findIndex(x => x.id === id), j = i + d
     if (j < 0 || j >= layers.length) return
@@ -69,11 +71,17 @@ export default function Panel({ s, set, live, busy, media, sel, setSel, focus, a
         {part?.split(' ').includes('props') && l && <>
           <Section icon={SlidersHorizontal} title={l.name} right={<button className={icon} title="Source settings" onClick={() => editSource(l)}><Settings2 size={13} /></button>}>
             <Segmented value={pt} onChange={setPt} options={[['move', 'Move'], ['style', 'Style'], ['color', 'Color']]} />
+            {l.type === 'lower' && <Button variant="primary" className="w-full h-8" onClick={() => window.__eng?.playLower(l.id)}>▶ Play lower third</Button>}
+            {l.type === 'goal' && <div className="flex gap-1"><Button className="flex-1 h-8" onClick={() => up({ cur: Math.max(0, (l.cur || 0) - (l.auto === 'superchat' ? 100 : 1)) })}>−</Button><Button className="flex-1 h-8" onClick={() => up({ cur: (l.cur || 0) + (l.auto === 'superchat' ? 100 : 1) })}>+</Button><Button className="flex-1 h-8" onClick={() => up({ cur: 0 })}>Reset</Button></div>}
             {pt === 'move' && <>
             <div className="flex gap-1.5">
               <Button className="flex-1" onClick={() => up({ x: 0.5, y: 0.5 })}>Center</Button>
               <Button className="flex-1" onClick={() => up({ x: 0.5, y: 0.5, w: 1, h: 1, rot: 0 })}>Fill canvas</Button>
               <Button className="flex-1" onClick={() => up({ flip: !l.flip })}>Flip</Button>
+            </div>
+            <div className="grid grid-cols-6 gap-1">
+              {[['⇤', 'Align left', { x: l.w / 2 }], ['↔', 'Centre horizontally', { x: 0.5 }], ['⇥', 'Align right', { x: 1 - l.w / 2 }], ['⤒', 'Align top', { y: l.h / 2 }], ['↕', 'Centre vertically', { y: 0.5 }], ['⤓', 'Align bottom', { y: 1 - l.h / 2 }]].map(([t, n, p]) =>
+                <Button key={n} title={n} className="h-8 px-0 text-[14px]" onClick={() => up(p)}>{t}</Button>)}
             </div>
             {l.type !== 'text' && <S label="Width" v={l.w} on={w => up({ w })} min={0.03} max={1.5} />}
             <S label="Height" v={l.h} on={h => up({ h })} min={0.02} max={1.5} />
@@ -98,6 +106,14 @@ export default function Panel({ s, set, live, busy, media, sel, setSel, focus, a
             <S label="Hue" v={l.grade.hue} on={hue => upG({ hue })} min={-180} max={180} step={1} />
             <S label="Warmth" v={l.grade.sepia} on={sepia => upG({ sepia })} />
             <S label="Blur" v={l.grade.blur} on={blur => upG({ blur })} max={30} step={1} />
+          </Section>}
+          {pt === 'color' && isMedia && <Section icon={Palette} title="Green screen & LUT">
+            <Row label="Chroma key"><input type="color" value={l.fx?.keyColor || '#00ff00'} onChange={e => upF({ keyColor: e.target.value })} className="h-7 w-10 rounded-md bg-transparent border border-white/10 p-0.5" /><Switch checked={!!l.fx?.keyOn} onChange={keyOn => upF({ keyOn })} /></Row>
+            {l.fx?.keyOn && <><S label="Similarity" v={l.fx.sim ?? 0.12} on={sim => upF({ sim })} min={0.01} max={0.4} /><S label="Smoothness" v={l.fx.smooth ?? 0.08} on={smooth => upF({ smooth })} min={0} max={0.3} /></>}
+            <Row label="LUT (.cube)"><span className="flex-1 truncate text-[11px] text-zinc-400">{l.fx?.lut?.split(/[\\/]/).pop() || 'None'}</span>
+              {l.fx?.lut && <Button variant="ghost" className="px-1.5" onClick={() => upF({ lut: '' })}><Trash2 size={12} /></Button>}
+              <Button onClick={async () => { const f = await api.invoke('file:pick', 'lut'); if (f) { try { setLut(f, parseCube(new TextDecoder().decode(await api.invoke('file:read', f)))); upF({ lut: f }) } catch (e) { alert(e.message) } } }}>Choose</Button></Row>
+            {l.fx?.lut && <S label="LUT amount" v={l.fx.lutAmt ?? 1} on={lutAmt => upF({ lutAmt })} />}
           </Section>}
         </>}
 
@@ -131,6 +147,8 @@ export default function Panel({ s, set, live, busy, media, sel, setSel, focus, a
         <Section icon={Clapperboard} title="Transitions & hotkeys">
           <Row label="Transition"><Select className="flex-1" value={s.trans} onChange={trans => set({ trans: +trans })}
             options={[[0, 'Cut'], [300, 'Fade · fast'], [700, 'Fade · smooth'], [1200, 'Fade · slow']]} /></Row>
+          <Row label="Style"><Select className="flex-1" value={s.transType || 'fade'} onChange={transType => set({ transType })} options={[['fade', 'Fade'], ['slide', 'Slide'], ['swipe', 'Swipe / wipe'], ['zoom', 'Zoom'], ['stinger', 'Stinger video']]} /></Row>
+          {s.transType === 'stinger' && <Row label="Stinger"><span className="flex-1 truncate text-[11px] text-zinc-400">{s.stinger?.split(/[\\/]/).pop() || 'None'}</span><Button onClick={async () => { const f = await api.invoke('file:pick', 'video'); if (f) set({ stinger: f, trans: s.trans || 700 }) }}>Choose</Button></Row>}
         </Section>
       </>}
 

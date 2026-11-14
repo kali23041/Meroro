@@ -1,15 +1,15 @@
 // Keys page: emulator-style key mapping. Toolbox of control types, live phone picture with gamepad markers, and an inspector.
 import { useEffect, useRef, useState } from 'react'
-import { Gamepad2, Trash2, RotateCcw, Copy, Move, Crosshair, MousePointerClick, ArrowUpRight, Target, Repeat, ToggleRight, Eye, Sparkle, ListOrdered, Plus, MousePointer2, X } from 'lucide-react'
+import { Gamepad2, Trash2, RotateCcw, Copy, Move, Crosshair, MousePointerClick, ArrowUpRight, Target, Repeat, ToggleRight, Eye, Sparkle, ListOrdered, Plus, MousePointer2, X, ScanEye, Check } from 'lucide-react'
 import { Button, Segmented, Select, Input, Switch, Slider, Row, Section, cx } from './ui'
-import { KEYMAPS, KINDS, MAP_DEFAULTS, newItem, combo, keyName, uidK } from './keymap'
+import { KEYMAPS, KINDS, MAP_DEFAULTS, PAD, newItem, combo, keyName, uidK, samplePts, matchTrigger } from './keymap'
 
 const ICON = { tap: MousePointerClick, joystick: Move, look: Crosshair, fire: Target, repeat: Repeat, toggle: ToggleRight, freelook: Eye, skill: Sparkle, swipe: ArrowUpRight, macro: ListOrdered }
 export const kindOf = it => it.type !== 'tap' ? it.type : it.kind === 'fire' || it.key === 'MouseLeft' ? 'fire' : it.mode === 'repeat' ? 'repeat' : it.mode === 'toggle' ? 'toggle' : 'tap'
 const short = k => keyName(k).replace('Mouse Left', 'LMB').replace('Mouse Right', 'RMB').replace('Mouse Middle', 'MMB').replace('Wheel Up', 'WH↑').replace('Wheel Down', 'WH↓').replace('Backquote', '`').replace('Space', '␣').replace('Shift+', '⇧').replace('Ctrl+', '⌃').replace('Alt+', '⌥')
 
 // Click, then press a key / mouse button (with Shift/Ctrl/Alt for combos like Shift+W).
-function KeyCap({ value, onChange, plain }) {
+export function KeyCap({ value, onChange, plain }) {
   const [on, setOn] = useState(false)
   useEffect(() => {
     if (!on) return
@@ -18,7 +18,8 @@ function KeyCap({ value, onChange, plain }) {
     const m = e => { e.preventDefault(); onChange(['MouseLeft', 'MouseMiddle', 'MouseRight'][e.button]); setOn(false) }
     const w = e => { onChange(e.deltaY < 0 ? 'WheelUp' : 'WheelDown'); setOn(false) }
     addEventListener('keydown', k, true); addEventListener('keyup', up, true); addEventListener('mousedown', m, true); addEventListener('wheel', w, true)
-    return () => { removeEventListener('keydown', k, true); removeEventListener('keyup', up, true); removeEventListener('mousedown', m, true); removeEventListener('wheel', w, true) }
+    let raf; const pad = () => { for (const g of navigator.getGamepads?.() || []) { const i = g?.buttons.findIndex(b => b.pressed); if (i >= 0) { onChange('Pad' + (PAD[i] || i)); setOn(false); return } } raf = requestAnimationFrame(pad) }; pad()
+    return () => { cancelAnimationFrame(raf); removeEventListener('keydown', k, true); removeEventListener('keyup', up, true); removeEventListener('mousedown', m, true); removeEventListener('wheel', w, true) }
   }, [on])
   return <button onClick={() => setOn(true)} className={cx('h-8 min-w-[92px] px-2.5 rounded-lg text-[12px] font-semibold', on ? 'bg-white text-black animate-pulse' : 'bg-[#323236] text-zinc-100 hover:bg-[#3a3a3f]')}>{on ? 'Press a key…' : keyName(value)}</button>
 }
@@ -66,6 +67,12 @@ export default function Keys({ s, set, eng, focus, apps }) {
   const add = type => { if ((type === 'joystick' || type === 'look') && map.items.some(i => i.type === type)) return; const n = newItem(type); upMap({ items: [...map.items, n] }); setSel(n.id) }
   const dupKeys = map.items.filter(i => i.key && map.items.some(j => j !== i && j.key === i.key)).map(i => i.id)
   const k = it && kindOf(it)
+  // screen triggers: record colours of a few spots while a menu (crate, map, bag) is open on the phone
+  const trs = map.triggers || [], [pick, setPick] = useState(''), [live, setLive] = useState({})
+  const upT = (tid, p) => upMap({ triggers: trs.map(t => t.id === tid ? { ...t, ...p } : t) })
+  useEffect(() => { const t = setInterval(() => { const f = eng.current?.frame; if (f) setLive(Object.fromEntries(trs.filter(x => x.points?.length).map(x => [x.id, matchTrigger(f, x)]))) }, 300); return () => clearInterval(t) }, [trs])
+  const addSpot = e => { const f = eng.current?.frame, tr = trs.find(t => t.id === pick); if (!f || !tr || tr.points.length >= 4) return; const [x, y] = pos(e), c = samplePts(f, [{ x, y }])?.[0]; if (c) upT(pick, { points: [...tr.points, { x: +x.toFixed(3), y: +y.toFixed(3), c }] }) }
+  const pickT = trs.find(t => t.id === pick)
 
   return (
     <div className="flex-1 min-w-0 flex flex-col">
@@ -94,6 +101,23 @@ export default function Keys({ s, set, eng, focus, apps }) {
                 </button>) })}
             </div>
           </Section>
+          <Section title="Screen triggers" right={<button className="p-1 rounded text-zinc-500 hover:text-white hover:bg-white/10" title="Add trigger" onClick={() => { const n = { id: uidK(), label: 'Crate open', points: [], tol: 40, on: true }; upMap({ triggers: [...trs, n] }); setPick(n.id) }}><Plus size={13} /></button>}>
+            {!trs.length && <div className="text-[11px] leading-relaxed text-zinc-500">Free the mouse by itself when a crate, map or bag opens. Press + and click spots of the open screen.</div>}
+            {trs.map(t => (
+              <div key={t.id} className="rounded-lg bg-[#2c2c30] p-2 space-y-1.5">
+                <div className="flex items-center gap-1.5">
+                  <Switch checked={t.on !== false} onChange={on => upT(t.id, { on })} />
+                  <Input className="h-7 flex-1 min-w-0" value={t.label} onChange={e => upT(t.id, { label: e.target.value })} />
+                  <span title={live[t.id] ? 'Matches the phone right now' : 'Not on screen now'} className={cx('size-2 shrink-0 rounded-full', live[t.id] ? 'bg-emerald-400' : 'bg-zinc-600')} />
+                  <button className="p-1 rounded text-zinc-500 hover:text-white" title="Delete" onClick={() => { upMap({ triggers: trs.filter(x => x.id !== t.id) }); pick === t.id && setPick('') }}><Trash2 size={12} /></button>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Button className={cx('h-7 px-2', pick === t.id && '!bg-white !text-black')} onClick={() => setPick(pick === t.id ? '' : t.id)}><ScanEye size={12} />{t.points.length ? `${t.points.length} spots` : 'Pick spots'}</Button>
+                  <Slider value={t.tol || 40} onChange={tol => upT(t.id, { tol })} min={10} max={100} step={1} format={v => 'Tol ' + Math.round(v)} />
+                </div>
+              </div>
+            ))}
+          </Section>
           <Section title="Map settings">
             <Row label="Name"><Input value={map.name} onChange={e => upMap({ name: e.target.value })} /></Row>
             <Row label="Game"><Select className="flex-1 min-w-0" value={map.pkg || ''} onChange={pkg => upMap({ pkg })} options={[['', 'Any game'], ...(apps || []).filter(a => !a.system).map(a => [a.pkg, a.name]), ...(map.pkg && !apps?.some(a => a.pkg === map.pkg) ? [[map.pkg, map.pkg]] : [])]} /></Row>
@@ -112,7 +136,7 @@ export default function Keys({ s, set, eng, focus, apps }) {
         <div className="flex-1 min-w-0 grid place-items-center rounded-2xl bg-black/50 p-4" onPointerDown={e => e.target === e.currentTarget && setSel('')}>
           <div ref={box} className="relative max-w-full max-h-full rounded-xl overflow-hidden ring-1 ring-white/10 bg-gradient-to-br from-zinc-800 to-zinc-900" style={{ aspectRatio: ar, height: ar > 1 ? undefined : '100%', width: ar > 1 ? '100%' : undefined }}
             onPointerMove={e => { if (drag.current) { const [x, y] = pos(e); up(drag.current, { x: +x.toFixed(3), y: +y.toFixed(3) }) } }} onPointerUp={() => { drag.current = null }} onPointerLeave={() => { drag.current = null }}
-            onPointerDown={e => e.target === e.currentTarget || e.target.tagName === 'CANVAS' ? setSel('') : null}>
+            onPointerDown={e => e.target === e.currentTarget || e.target.tagName === 'CANVAS' ? (pick ? addSpot(e) : setSel('')) : null}>
             <canvas ref={cv} className="absolute inset-0 w-full h-full opacity-60" />
             {map.items.map(i => (
               <div key={i.id} onPointerDown={e => { e.preventDefault(); e.stopPropagation(); setSel(i.id); drag.current = i.id }} title={i.label}
@@ -120,6 +144,11 @@ export default function Keys({ s, set, eng, focus, apps }) {
                 <Marker it={i} sel={i.id === sel} dup={dupKeys.includes(i.id)} bw={bs[0]} bh={bs[1]} op={1} />
               </div>
             ))}
+            {pickT && pickT.points.map((p, n) => <span key={n} className="absolute size-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-lg pointer-events-none" style={{ left: p.x * 100 + '%', top: p.y * 100 + '%', background: `rgb(${p.c.join(',')})` }} />)}
+            {pickT && <div className="absolute top-2 left-1/2 -translate-x-1/2 flex items-center gap-2 rounded-lg bg-black/80 pl-3 pr-1 py-1 text-[11px] text-zinc-200">
+              <ScanEye size={12} />Open it on the phone, then click 1–4 spots that only look like this when it’s open ({pickT.points.length}/4)
+              {pickT.points.length > 0 && <Button className="h-6 px-2" onClick={() => upT(pick, { points: [] })}>Clear</Button>}
+              <Button variant="primary" className="h-6 px-2" onClick={() => setPick('')}><Check size={11} />Done</Button></div>}
             <div className="absolute bottom-2 left-2 rounded-md bg-black/60 px-2 py-1 text-[10px] text-zinc-300 pointer-events-none flex items-center gap-1.5"><MousePointer2 size={11} />Drag markers onto the game's buttons · {keyName(map.cursorKey)} frees the cursor while playing</div>
           </div>
         </div>
@@ -134,6 +163,7 @@ export default function Keys({ s, set, eng, focus, apps }) {
             {it.type === 'tap' && <>
               <Row label="Key"><KeyCap value={it.key} onChange={key => up(it.id, { key })} /></Row>
               <Segmented value={it.mode || 'hold'} onChange={m => up(it.id, { mode: m === 'hold' ? undefined : m, ...(m === 'repeat' && !it.rate ? { rate: 90 } : {}) })} options={[['hold', 'Hold'], ['tap', 'Tap'], ['toggle', 'Toggle'], ['repeat', 'Rapid']]} />
+              <Row label="Frees the mouse"><Switch checked={!!it.cursor} onChange={cursor => up(it.id, { cursor })} /></Row>
               {it.mode === 'repeat' && <Row label="Speed"><Slider value={it.rate || 90} onChange={rate => up(it.id, { rate })} min={40} max={400} step={10} format={v => Math.round(1000 / v) + ' taps/s'} /></Row>}
             </>}
             {it.type === 'swipe' && <><Row label="Key"><KeyCap value={it.key} onChange={key => up(it.id, { key })} /></Row>

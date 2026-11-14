@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  SlidersVertical, GripHorizontal, MessageSquare, LayoutDashboard, Sparkles, Zap, Gamepad2, Smartphone, Wifi, Usb, Radio, Circle, Square, Mic, Volume2, Headphones, Camera, Layers, ChevronLeft, Search,
+  SlidersVertical, GripHorizontal, MessageSquare, Music, Bell, LayoutDashboard, Sparkles, Zap, Gamepad2, Smartphone, Wifi, Usb, Radio, Circle, Square, Mic, Volume2, Headphones, Camera, Layers, ChevronLeft, Search,
   AppWindow, ShieldCheck, ExternalLink, Info, X, Eye, EyeOff, RefreshCw, MousePointerClick, FolderOpen
 } from 'lucide-react'
 import { Engine } from './engine'
@@ -10,13 +10,19 @@ import { Logo, About, VERSION } from './Brand'
 import { useMeta, AppIcon } from './Library'
 import AddSource from './AddSource'
 import Perf from './Perf'
+import Sounds from './Sounds'
+import StreamPlus, { titleFor } from './StreamPlus'
+import WhatsNew, { LATEST } from './WhatsNew'
+import { PAD } from './keymap'
+import { parseCube, setLut } from './gpu'
+import CleanScreen from './Clean'
 import { SourceDialog, SceneDialog, FloatChat } from './Dialogs'
 import Device from './Device'
 import Wireless from './Wireless'
 import { AutoPanel, ChatBox, Quick } from './Pages'
 import PresetPicker from './PresetPicker'
 import Keys, { KeyHints } from './Keys'
-import { KEYMAPS, MAP_DEFAULTS, Mapper, combo } from './keymap'
+import { KEYMAPS, MAP_DEFAULTS, Mapper, combo, matchTrigger } from './keymap'
 import { PRESETS, patchLayer, newLayer } from './scene'
 import { Button, Segmented, Slider, Switch, Select, Input, Row, Section, Card, Tabs, cx } from './ui'
 
@@ -143,18 +149,24 @@ export default function App() {
     const offs = [
       api.on('session:video', p => e.pushVideo(p)),
       api.on('session:audio', d => e.pushAudio(d)),
+      api.on('ios:video', p => e.pushIos(p)),
+      api.on('ios:audio', d => e.pushIosAudio(d)),
+      api.on('ios:end', err => { e.ios.clear(); iosRun.current = ''; if (err) setNote({ text: err, bad: true }) }),
       api.on('chat:msg', m => {
         e.pushChat(m); setChat(c => [...c.slice(-199), m])
         if (m.old) return
         hot.current.fire(m.type, m)
         if (m.type === 'chat') { hot.current.fire('command', m); hot.current.fire('keyword', m) }
+        hot.current.chat(m)
       }),
       api.on('session:log', l => /WARN|ERROR|unavailable/.test(l) && setNote({ text: l.replace(/^\[server\]\s*/, '') })),
       api.on('session:end', err => { e.clear(); setCap('idle'); if (err) setNote({ text: err, bad: true }) }),
-      api.on('out:stats', (id, st) => { if (id === 'live') { setStats(st); setLive('on') } else setRec(st.time.slice(0, 8)) }),
+      api.on('out:stats', (id, st) => { if (id === 'live') { setStats(st); setLive('on'); setHist(h => [...h.slice(-59), st]); hot.current.stat(st) } else if (id === 'rec') setRec(st.time.slice(0, 8)) }),
       api.on('out:end', (id, r) => {
         e.stopOutput(id)
-        if (id === 'live') { setLive(null); setStats(null); hot.current.fire('end') } else setRec(null)
+        if (id === 'live2') return r.error && setNote({ text: 'Second output: ' + r.error, bad: true })
+        if (id === 'live' && hot.current.again(r)) return // reconnecting or changing bitrate
+        if (id === 'live') { setLive(null); setStats(null); setHist([]); e.stopOutput('live2'); hot.current.fire('end') } else setRec(null)
         if (r.error) setNote({ text: r.error, bad: true })
         else if (r.file) setNote({ text: 'Recording saved to Movies', file: r.file })
       })
@@ -203,7 +215,7 @@ export default function App() {
 
   // Hotkeys: Cmd/Ctrl+1..9 switch scenes, Cmd/Ctrl+R toggles recording.
   const hot = useRef()
-  hot.current = { record: () => record(), fire: (...a) => fire(...a) } // lazy: both are declared further down
+  hot.current = { record: () => record(), fire: (...a) => fire(...a), stat: st => liveStat(st), again: r => liveAgain(r), chat: m => chatExtras(m) } // lazy: both are declared further down
   useEffect(() => {
     const h = e => {
       if (!(e.metaKey || e.ctrlKey) || e.target.tagName === 'INPUT') return
@@ -230,13 +242,46 @@ export default function App() {
   const source = p => { const n = { ...s, ...p }; setS(n); if (cap === 'on') start(n) } // source changes restart a running capture
 
   // ---- outputs ----
+  const [hist, setHist] = useState([])
+  const want = useRef(false), br = useRef(0), restart = useRef(false), slow = useRef(0), fine = useRef(0)
+  const startLive = async bitrate => {
+    await eng.current.startOutput('live', { dest: s.dest, key: s.key.trim(), url: s.customUrl.trim(), bitrate, fps: +s.fps, encoder: s.encoder })
+    const o2 = s.out2
+    if (o2?.on && o2.key && o2.sceneId && !eng.current.recs.live2) eng.current.startOutput('live2', { dest: o2.dest, key: o2.key.trim(), url: (o2.url || '').trim(), bitrate: +o2.bitrate || 6000, fps: +s.fps, encoder: s.encoder }).catch(e => setNote({ text: 'Second output: ' + clean(e), bad: true }))
+  }
   const goLive = async () => {
-    if (live) return eng.current.stopOutput('live')
+    if (live) { want.current = false; eng.current.stopOutput('live2'); return eng.current.stopOutput('live') }
     if (!s.key) return setNote({ text: 'Paste your stream key first — YouTube Studio → Go live → Stream.', bad: true })
     if (s.dest === 'custom' && !/^rtmps?:\/\//.test(s.customUrl)) return setNote({ text: 'Enter the RTMP server URL (rtmp://…).', bad: true })
-    setNote(null); setLive('starting')
-    try { await eng.current.startOutput('live', { dest: s.dest, key: s.key.trim(), url: s.customUrl.trim(), bitrate: +s.bitrate, fps: +s.fps, encoder: s.encoder }); fire('live') }
-    catch (e) { setLive(null); fail(e) }
+    setNote(null); setLive('starting'); want.current = true; br.current = +s.bitrate
+    try { await startLive(br.current); fire('live') }
+    catch (e) { want.current = false; setLive(null); fail(e) }
+  }
+  const liveAgain = r => { // called when ffmpeg ends: restart for a bitrate change, or reconnect after a drop
+    if (!want.current) return false
+    if (restart.current) { restart.current = false; startLive(br.current).catch(fail); return true }
+    if (r.error && s.reconnect !== false) {
+      setLive('retry'); setNote({ text: 'Connection lost — reconnecting…', bad: true })
+      setTimeout(() => want.current && startLive(br.current).then(() => setNote({ text: 'Reconnected' })).catch(() => liveAgain(r)), 3000)
+      return true
+    }
+    want.current = false; return false
+  }
+  const liveStat = st => { // adaptive bitrate: step down when the encoder/upload falls behind, back up when steady
+    if (!s.autoBitrate || restart.current) return
+    if (st.speed < 0.92) { fine.current = 0; if (++slow.current >= 8 && br.current > 1500) { slow.current = 0; br.current = Math.max(1500, Math.round(br.current * 0.7)); restart.current = true; setNote({ text: `Upload is slow — bitrate lowered to ${br.current} kbps` }); eng.current.stopOutput('live') } }
+    else { slow.current = 0; if (++fine.current >= 60 && br.current < +s.bitrate) { fine.current = 0; br.current = Math.min(+s.bitrate, Math.round(br.current * 1.25)); restart.current = true; setNote({ text: `Connection steady — bitrate raised to ${br.current} kbps` }); eng.current.stopOutput('live') } }
+  }
+  const cmdAt = useRef({})
+  const chatExtras = m => { // goal bars + chat commands
+    const amt = m.type === 'superchat' ? parseFloat(String(m.amount || '').replace(/[^\d.]/g, '')) || 0 : 0
+    setS(o => ({ ...o, scenes: o.scenes.map(sc => ({ ...sc, layers: sc.layers.map(l => l.type !== 'goal' ? l : l.auto === 'superchat' && amt ? { ...l, cur: (l.cur || 0) + amt } : l.auto === 'member' && m.type === 'member' ? { ...l, cur: (l.cur || 0) + 1 } : l.auto === 'chat' && m.type === 'chat' ? { ...l, cur: (l.cur || 0) + 1 } : l) })) }))
+    const t = (m.text || '').trim().toLowerCase()
+    for (const c of sRef.current.cmds || []) {
+      if (!c.on || !c.trigger || !t.startsWith(c.trigger.toLowerCase()) || Date.now() - (cmdAt.current[c.id] || 0) < c.cd * 1000) continue
+      cmdAt.current[c.id] = Date.now()
+      api.invoke('chat:send', c.reply.replace('{name}', m.author || '')).catch(e => setNote({ text: clean(e), bad: true }))
+    }
   }
   const record = async () => {
     if (rec) return eng.current.stopOutput('rec')
@@ -288,13 +333,47 @@ export default function App() {
   }, [focus, s.keymapAuto])
   const game = canCtl && s.keymapOn
   const locked = () => document.pointerLockElement === canvas.current
+  // Free mouse: map / bag keys, the cursor key, or a screen trigger (crate open…) release the mouse so you can click on the phone.
+  const [free, setFreeS] = useState(''), freeRef = useRef('')
+  const setFree = (why, by = 'key') => {
+    freeRef.current = why ? { why, by } : ''; setFreeS(why); mapper.current.reset()
+    if (why) { if (locked()) document.exitPointerLock() }
+    else try { canvas.current?.requestPointerLock()?.catch?.(() => {}) } catch {}
+  }
+  mapper.current.onCursor = it => freeRef.current ? setFree('') : setFree(it.label || 'Menu')
+  useEffect(() => { if (!game && freeRef.current) { freeRef.current = ''; setFreeS('') } }, [game])
+  useEffect(() => { const h = () => { if (!locked()) mapper.current.reset() }; document.addEventListener('pointerlockchange', h); return () => document.removeEventListener('pointerlockchange', h) }, [])
+  useEffect(() => { // screen triggers: two matching reads in a row free the mouse, two misses take it back
+    const trs = (km.triggers || []).filter(t => t.on !== false && t.points?.length)
+    if (!game || !trs.length) return
+    let hit = 0, miss = 0
+    const t = setInterval(() => {
+      const f = eng.current?.frame; if (!f) return
+      const m = trs.find(tr => matchTrigger(f, tr))
+      if (m) { miss = 0; if (++hit === 2 && !freeRef.current) setFree(m.label || 'Screen', 'auto') }
+      else { hit = 0; if (++miss === 2 && freeRef.current?.by === 'auto') setFree('') }
+    }, 150)
+    return () => clearInterval(t)
+  }, [game, km.triggers])
+  // Mouse buttons are read from e.buttons on every event: a release while another button is held arrives as a move, not an "up"
+  const BTN = [[1, 'MouseLeft'], [2, 'MouseRight'], [4, 'MouseMiddle']]
+  const buttons = b => { for (const [bit, code] of BTN) mapper.current.key(code, !!(b & bit)) }
   const gamePtr = {
     onContextMenu: e => e.preventDefault(),
-    onPointerDown: e => { e.preventDefault(); canvas.current.focus(); if (!locked()) return canvas.current.requestPointerLock(); mapper.current.key(['MouseLeft', 'MouseMiddle', 'MouseRight'][e.button], true) },
-    onPointerUp: e => locked() && mapper.current.key(['MouseLeft', 'MouseMiddle', 'MouseRight'][e.button], false),
-    onPointerMove: e => locked() && mapper.current.look(e.movementX, e.movementY),
-    onWheel: e => locked() && mapper.current.pulse(e.deltaY < 0 ? 'WheelUp' : 'WheelDown'),
-    onKeyDown: e => { if (e.code === (km.cursorKey || 'Backquote')) { e.preventDefault(); mapper.current.reset(); return locked() ? document.exitPointerLock() : canvas.current.requestPointerLock() } if (e.code === 'Escape' || e.metaKey) return; e.preventDefault(); if (!e.repeat) mapper.current.key(e.code, true, combo(e)) },
+    onPointerDown: e => {
+      e.preventDefault(); canvas.current.focus()
+      if (freeRef.current) { if (e.button) return; const p = pos(e); if (!p) return; e.currentTarget.setPointerCapture(e.pointerId); api.send('ctl', { t: 'touch', a: 0, ...p }); down.current = true; return }
+      if (!locked()) return canvas.current.requestPointerLock()
+      buttons(e.buttons)
+    },
+    onPointerUp: e => { if (freeRef.current) { if (down.current) { const p = pos(e); p && api.send('ctl', { t: 'touch', a: 1, ...p }); down.current = false } return } locked() && buttons(e.buttons) },
+    onPointerMove: e => { if (freeRef.current) { if (down.current) { const p = pos(e); p && api.send('ctl', { t: 'touch', a: 2, ...p }) } return } if (locked()) { buttons(e.buttons); mapper.current.look(e.movementX, e.movementY) } },
+    onWheel: e => { if (freeRef.current) { const p = pos(e); if (p) api.send('ctl', { t: 'scroll', ...p, dx: -e.deltaX / 40, dy: -e.deltaY / 40 }) } else if (locked()) mapper.current.pulse(e.deltaY < 0 ? 'WheelUp' : 'WheelDown') },
+    onKeyDown: e => {
+      if (e.code === (km.cursorKey || 'Backquote')) { e.preventDefault(); return freeRef.current ? setFree('') : locked() ? setFree('Cursor') : canvas.current.requestPointerLock() }
+      if (e.code === 'Escape' || e.metaKey) return
+      e.preventDefault(); if (!e.repeat) mapper.current.key(e.code, true, combo(e))
+    },
     onKeyUp: e => { e.preventDefault(); mapper.current.key(e.code, false) },
     onBlur: () => mapper.current.reset()
   }
@@ -332,10 +411,16 @@ export default function App() {
       const d = drag.current
       if (!d) return
       const E = eng.current, c = canvas.current, [px, py] = cpt(e), snap = v => Math.abs(v - 0.5) < 0.012 ? 0.5 : v
-      if (d.mode === 'move') upL(d.id, { x: snap(d.l.x + (px - d.px) / c.width), y: snap(d.l.y + (py - d.py) / c.height) })
+      if (d.mode === 'move') { // snap edges/centres to the canvas and to other sources
+        let x = d.l.x + (px - d.px) / c.width, y = d.l.y + (py - d.py) / c.height
+        const others = layersNow().filter(l => l.id !== d.id && l.visible), gx = [0, 0.5, 1, ...others.flatMap(l => [l.x - l.w / 2, l.x, l.x + l.w / 2])], gy = [0, 0.5, 1, ...others.flatMap(l => [l.y - l.h / 2, l.y, l.y + l.h / 2])]
+        const fit = (v, half, gs) => { for (const o of [-half, 0, half]) for (const g of gs) if (Math.abs(v + o - g) < 0.01) return [g - o, g]; return [v, null] }
+        const [sx, lx] = fit(x, d.l.w / 2, gx), [sy, ly] = fit(y, d.l.h / 2, gy)
+        setGuides([lx, ly]); upL(d.id, { x: sx, y: sy })
+      }
       else { const k = Math.max(0.05, Math.hypot(...E.local(E.geo[d.id], px, py)) / d.d0); upL(d.id, { w: d.l.w * k, h: d.l.h * k }) }
     },
-    onPointerUp: () => { drag.current = null },
+    onPointerUp: () => { drag.current = null; setGuides([null, null]) },
     onWheel: e => { const l = sel && layerOf(sel); if (l) { const k = e.deltaY < 0 ? 1.04 : 0.96; upL(sel, { w: l.w * k, h: l.h * k }) } },
     onKeyDown: e => {
       const l = sel && layerOf(sel), d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key]
@@ -374,7 +459,57 @@ export default function App() {
     if (!pkg && !k) return
     setS(o => ({ ...o, appKeymaps: pkg ? { ...o.appKeymaps, [pkg]: k || undefined } : o.appKeymaps, ...(k ? { keymapId: k, keymapOn: true, control: true } : pkg && mapFor(pkg) ? { keymapOn: false } : {}) }))
   }
-  const DOCK = [['studio', 'Studio', SlidersVertical], ['keys', 'Keys', Gamepad2], ['device', 'Device', Smartphone]]
+  // iPhone / iPad feed: runs while any scene has an iPhone source (the current scene's wins)
+  const iosRun = useRef('')
+  const iosOf = sc => sc?.layers.find(l => l.type === 'ios' && l.src)?.src
+  const iosSrc = iosOf(s.scenes.find(x => x.id === s.sceneId)) || s.scenes.map(iosOf).find(Boolean) || ''
+  useEffect(() => {
+    if (!saved || iosSrc === iosRun.current) return
+    iosRun.current = iosSrc; eng.current.ios.clear()
+    if (!iosSrc) api.invoke('ios:stop').catch(() => {})
+    else api.invoke('ios:start', iosSrc).then(() => setNote({ text: iosSrc === 'airplay' ? 'AirPlay ready: on the iPhone open Control Center → Screen Mirroring → Meroro' : 'Connecting to the iPhone over USB…' })).catch(e => { iosRun.current = ''; fail(e) })
+  }, [iosSrc, !saved])
+  const [guides, setGuides] = useState([null, null])
+  const layersNow = () => (sRef.current.scenes.find(x => x.id === sRef.current.sceneId) || sRef.current.scenes[0]).layers
+  // LUT files used by sources load once
+  useEffect(() => { for (const sc of s.scenes) for (const l of sc.layers) if (l.fx?.lut && !window.__luts?.[l.fx.lut]) { (window.__luts ??= {})[l.fx.lut] = 1; api.invoke('file:read', l.fx.lut).then(b => setLut(l.fx.lut, parseCube(new TextDecoder().decode(b)))).catch(() => {}) } }, [s.scenes])
+  // push-to-talk / push-to-mute (while Meroro is focused)
+  useEffect(() => {
+    const p = { mode: 'off', key: 'KeyV', ...s.ptt }, E = eng.current
+    E.setGate(p.mode !== 'ptt')
+    if (p.mode === 'off') return
+    const h = down => e => { if (e.code !== p.key || e.repeat || /INPUT|TEXTAREA/.test(e.target.tagName)) return; E.setGate(p.mode === 'ptt' ? down : !down) }
+    const d = h(true), u = h(false); addEventListener('keydown', d); addEventListener('keyup', u)
+    return () => { removeEventListener('keydown', d); removeEventListener('keyup', u) }
+  }, [s.ptt?.mode, s.ptt?.key])
+  // soundboard keys work everywhere
+  useEffect(() => { api.invoke('hotkeys:set', (s.pads || []).map(p => ({ id: p.id, key: p.key }))) }, [JSON.stringify((s.pads || []).map(p => p.key))])
+  useEffect(() => api.on('hotkey', id => { const p = sRef.current.pads?.find(x => x.id === id); if (p) eng.current.playSound(p.file).catch(() => {}) }), [])
+  // controllers: buttons → key map, left stick → move, right stick → aim
+  useEffect(() => {
+    if (!game) return
+    let raf, prev = {}
+    const tick = () => {
+      for (const g of navigator.getGamepads?.() || []) {
+        if (!g) continue
+        g.buttons.forEach((b, i) => { const c = 'Pad' + (PAD[i] || i); if (!!prev[c] !== b.pressed) { prev[c] = b.pressed; mapper.current.key(c, b.pressed) } })
+        const [lx, ly, rx, ry] = g.axes
+        mapper.current.pad = [lx, ly]; mapper.current.stick()
+        if (Math.hypot(rx, ry) > 0.15) mapper.current.look(rx * 14, ry * 14)
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    tick()
+    return () => { cancelAnimationFrame(raf); mapper.current.pad = null }
+  }, [game])
+  // stream title: copy a fresh title when the game in front changes while live
+  const lastGame = useRef('')
+  useEffect(() => { const a = apps?.find(x => x.pkg === focus); if (!s.autoTitle || !live || !a || a.pkg === lastGame.current || !frontIsApp) return; lastGame.current = a.pkg; navigator.clipboard.writeText(titleFor(s, a.name)).then(() => setNote({ text: `New title copied for ${a.name} — paste it in YouTube Studio` })).catch(() => {}) }, [focus, live])
+  // updates
+  const [upd, setUpd] = useState(null)
+  useEffect(() => { if (saved && s.autoUpdate !== false) api.invoke('update:check').then(setUpd).catch(() => {}) }, [!saved])
+  const go = r => { setView(r.view || 'studio'); if (r.rtab) setRtab(r.rtab); if (r.add) { const l = newLayer(r.add); if (r.add === 'ios') setAdding('src'); else setSrcDlg({ layer: l, isNew: true }) } }
+  const DOCK = [['studio', 'Studio', SlidersVertical], ['new', 'What’s new', Bell], ['keys', 'Keys', Gamepad2], ['device', 'Device', Smartphone]]
   const addLayer = n => setS(o => { // from the Add source window; "bg" adds a hidden source used only as the blurred backdrop
     const bg = adding === 'bg', l = bg ? { ...n, bgOnly: true } : n
     return { ...o, scenes: o.scenes.map(sc => sc.id !== o.sceneId ? sc : { ...sc, layers: bg ? [l, ...sc.layers] : [...sc.layers, l], ...(bg ? { bgBlur: true, bgSrc: l.id } : {}) }) }
@@ -388,6 +523,7 @@ export default function App() {
           <Logo size={22} /><span className="text-[15px] font-extrabold tracking-tight text-white">Meroro</span><span className="text-[11px] text-zinc-500">by Kartik Sabale</span>
         </button>
         <div className="flex-1" />
+        {upd && <button className="no-drag h-7 px-3 rounded-full bg-orange-500 text-black text-[12px] font-semibold" onClick={() => setView('new')}>Update {upd.version} available</button>}
         {view === 'studio' && JSON.stringify(lay) !== JSON.stringify(DEF.layout) && <Button variant="ghost" className="no-drag" onClick={() => set({ layout: DEF.layout })}><LayoutDashboard size={13} />Reset layout</Button>}
         {note && (
           <div className={cx('no-drag pop min-w-0 max-w-[46%] flex items-center gap-1.5 rounded-full bg-white/[0.06] border border-white/[0.08] pl-2.5 pr-1 h-7 text-[12px]', note.bad ? 'text-red-400' : 'text-zinc-300')}>
@@ -409,7 +545,8 @@ export default function App() {
         <nav className="w-[52px] shrink-0 flex flex-col items-center gap-1.5 py-2">
           {DOCK.map(([v, t, I]) => (
             <button key={v} onClick={() => setView(v)} title={t}
-              className={cx('size-10 rounded-full grid place-items-center transition-all duration-200', view === v ? 'bg-white/[0.1] text-violet-300' : 'text-zinc-500 hover:text-zinc-100 hover:bg-white/[0.06]')}><I size={18} strokeWidth={1.75} /></button>
+              className={cx('relative size-10 rounded-full grid place-items-center transition-all duration-200', view === v ? 'bg-white/[0.1] text-violet-300' : 'text-zinc-500 hover:text-zinc-100 hover:bg-white/[0.06]')}><I size={18} strokeWidth={1.75} />
+              {v === 'new' && (s.seenNew !== LATEST || upd) && <span className="absolute top-1.5 right-1.5 size-2 rounded-full bg-orange-500" />}</button>
           ))}
           <div className="flex-1" />
           <button onClick={() => setPerm(true)} title="Permissions" className="size-10 rounded-full grid place-items-center text-zinc-500 hover:text-zinc-100 hover:bg-white/[0.08]"><ShieldCheck size={17} /></button>
@@ -417,6 +554,7 @@ export default function App() {
         </nav>
 
         {view !== 'studio' && <Card key={view} className="pop flex-1 min-w-0 flex">
+          {view === 'new' && <WhatsNew go={go} s={s} set={set} />}
           {view === 'keys' && <Keys s={s} set={set} eng={eng} focus={focus} apps={apps} />}
           {view === 'device' && <Device devices={devices} serial={serial} setSerial={setSerial} ready={ready} focus={focus} apps={apps} meta={meta} onNote={setNote} />}
         </Card>}
@@ -509,11 +647,12 @@ export default function App() {
                 <button onClick={record} title={rec ? 'Stop recording' : 'Record'} className="h-8 px-3 rounded-xl bg-black/60 backdrop-blur-md border border-white/10 flex items-center gap-2 text-[11px] font-semibold tabular-nums hover:bg-black/80 transition-colors">
                   <Circle size={9} className={cx('fill-red-500 text-red-500', rec && 'live-dot')} />{rec || 'REC'}</button>
                 <span className={cx('h-8 px-3 rounded-xl border flex items-center gap-2 text-[11px] font-semibold tabular-nums backdrop-blur-md', live === 'on' ? 'bg-red-500 border-red-400 text-white' : 'bg-black/60 border-white/10 text-zinc-400')}>
-                  {live === 'on' ? <><span className="size-1.5 rounded-full bg-white live-dot" />LIVE {stats?.time.slice(0, 8)}</> : live ? 'CONNECTING…' : 'OFFLINE'}</span>
+                  {live === 'on' ? <><span className="size-1.5 rounded-full bg-white live-dot" />LIVE {stats?.time.slice(0, 8)}</> : live === 'retry' ? 'RECONNECTING…' : live ? 'CONNECTING…' : 'OFFLINE'}</span>
               </div>
-              {game && <div className="absolute bottom-3 left-1/2 -translate-x-1/2 h-7 px-3 rounded-full bg-white text-black text-[12px] font-semibold flex items-center gap-1.5 pointer-events-none whitespace-nowrap"><Gamepad2 size={13} />{km.name} controls on · click the preview · ` frees the cursor</div>}
+              {game && <div className="absolute bottom-3 left-1/2 -translate-x-1/2 h-7 px-3 rounded-full bg-white text-black text-[12px] font-semibold flex items-center gap-1.5 pointer-events-none whitespace-nowrap"><Gamepad2 size={13} />{free ? `Mouse free · ${free} · click to tap the phone · ${km.cursorKey === 'Backquote' || !km.cursorKey ? '`' : km.cursorKey} to aim again` : `${km.name} controls on · click the preview · \` frees the cursor`}</div>}
               {game && km.hints !== false && <KeyHints eng={eng} canvas={canvas} map={km} />}
               {!s.control && sel && <SelBox eng={eng} canvas={canvas} id={sel} />}
+              {guides.map((g, i) => g != null && <div key={i} className="absolute pointer-events-none bg-orange-400/80" style={(() => { const c = canvas.current; if (!c) return {}; const k = c.clientWidth / c.width; return i ? { left: c.offsetLeft, width: c.clientWidth, top: c.offsetTop + g * c.height * k, height: 1 } : { top: c.offsetTop, height: c.clientHeight, left: c.offsetLeft + g * c.width * k, width: 1 } })()} />)}
               {cap === 'starting' && <div className="absolute bottom-3 left-1/2 -translate-x-1/2 h-7 px-3 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-[12px] text-zinc-300 flex items-center gap-1.5 pointer-events-none whitespace-nowrap"><RefreshCw size={12} className="animate-spin" />Connecting to {dev?.model}…</div>}
               {covered && <div className="absolute top-12 left-1/2 -translate-x-1/2 h-7 px-3 rounded-full bg-amber-500 text-black text-[12px] font-semibold flex items-center gap-1.5 whitespace-nowrap"><ShieldCheck size={13} />Stream covered — {picked?.name || 'the app'} is not in front</div>}
             </div>
@@ -532,6 +671,7 @@ export default function App() {
                 <Select className="w-[124px]" value={s.keymapId} onChange={k => bindMap(ctlApp?.pkg, k)} options={Object.entries(s.keymaps).map(([k, m]) => [k, m.name])} />
                 <Button variant="ghost" className="px-1.5" title="Edit key map" onClick={() => setView('keys')}><SlidersVertical size={13} /></Button>
               </div>
+              <CleanScreen serial={serial} ready={ready} s={s} set={set} apps={apps} meta={meta} live={live} />
               <Button variant="ghost" title="YouTube chat window" className={cx('px-2', s.chatFloat && 'text-white bg-white/10')} onClick={() => set({ chatFloat: !s.chatFloat })}><MessageSquare size={14} />Chat</Button>
               <Quick compact q={qa} />
             </div>
@@ -548,9 +688,12 @@ export default function App() {
         {/* right: scene panel + go live */}
 
           <Slot key="scene" id="scene" pos={place('scene')} swap={swap}><Card className="flex-1 min-h-0 flex flex-col">
-            <div className="px-1.5 pt-1.5"><Segmented value={rtab} onChange={setRtab} options={[['props', 'Properties', SlidersVertical], ['live', 'Stream', Radio], ['auto', 'Auto', Zap]]} /></div>
+            <div className="px-1.5 pt-1.5"><Segmented value={rtab} onChange={setRtab} options={[['props', 'Props', SlidersVertical], ['live', 'Stream', Radio], ['auto', 'Auto', Zap], ['sounds', 'Sound', Music]]} /></div>
             {rtab === 'auto' ? <div className="flex-1 min-h-0 overflow-y-auto p-1.5"><AutoPanel s={s} set={set} stopSound={() => eng.current.stopSound()} test={r => act(r, { author: 'Test viewer', amount: '₹100', text: 'Great stream!' })}
               appRules={<Panel mode="auto" s={s} set={set} focus={focus} apps={apps} media={media} sel="" setSel={() => {}} />} /></div>
+            : rtab === 'sounds' ? <div className="flex-1 min-h-0 overflow-y-auto p-1.5"><Sounds s={s} set={set} eng={eng} /></div>
+            : rtab === 'live' ? <div className="flex-1 min-h-0 overflow-y-auto"><Panel part="live" s={s} set={set} live={live} busy={busy} media={media} sel={sel} setSel={setSel} focus={focus} apps={apps} />
+              <div className="px-1.5 pb-1.5"><StreamPlus s={s} set={set} hist={hist} live={live} busy={busy} game={apps?.find(x => x.pkg === focus)?.name} /></div></div>
             : <Panel part={rtab} editSource={l => setSrcDlg({ layer: l })} s={s} set={set} live={live} busy={busy} media={media} sel={sel} setSel={setSel} focus={focus} apps={apps} />}
           </Card></Slot>
           <Slot key="live" id="live" pos={place('live')} swap={swap}><Card className="flex-1 p-2.5 flex flex-col justify-center gap-2">

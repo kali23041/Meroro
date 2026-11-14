@@ -1,14 +1,15 @@
-import { app, BrowserWindow, ipcMain, safeStorage, shell, systemPreferences, powerSaveBlocker, dialog, desktopCapturer, session as esession } from 'electron'
+import { app, BrowserWindow, ipcMain, safeStorage, shell, systemPreferences, powerSaveBlocker, dialog, desktopCapturer, globalShortcut, session as esession } from 'electron'
 import { readFile } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { spawn, execFile } from 'node:child_process'
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs'
 import { splashWindow } from './splash'
 import { BRAND } from '../shared/brand'
 import { Chat } from './chat'
-import { adb, listDevices, listApps, foreground, deviceInfo, perf, appInfo, appAction, screenshot, Session, FFMPEG } from './phone'
+import { iosUsb, iosStart, iosStop, stopWatch, uxplayPath, installUxplay } from './ios'
+import { adb, listDevices, listApps, foreground, deviceInfo, overlayApps, cleanOn, cleanOff, perf, appInfo, appAction, screenshot, Session, FFMPEG } from './phone'
 
 const mac = process.platform === 'darwin'
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
@@ -22,11 +23,12 @@ const send = (ch, ...a) => { if (win && !win.isDestroyed()) win.webContents.send
 function createWindow() {
   const t0 = Date.now(), splash = process.env.MERORO_TEST && !process.env.MERORO_SPLASH ? null : splashWindow(app.getVersion())
   win = new BrowserWindow({
-    width: 1400, height: 880, minWidth: 1180, minHeight: 720, show: false, backgroundColor: '#09090b',
+    width: 1600, height: 783, minWidth: 1180, minHeight: 578, show: false, backgroundColor: '#09090b',
     titleBarStyle: 'hidden',
     ...(mac ? { trafficLightPosition: { x: 16, y: 14 } } : { titleBarOverlay: { color: '#09090b', symbolColor: '#a1a1aa', height: 44 } }),
     webPreferences: { preload: join(__dirname, '../preload/index.js'), backgroundThrottling: false }
   })
+  win.setAspectRatio(2000 / 979) // the studio layout is designed for this shape; resizing keeps it
   win.once('ready-to-show', () => setTimeout(() => { splash?.destroy(); win.show(); win.focus() }, splash ? Math.max(0, 1600 - (Date.now() - t0)) : 0))
   if (!app.isPackaged && process.env.MERORO_TEST) createRequire(__filename)(process.env.MERORO_TEST)({ win, send, app }) // dev self-test hook
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' } })
@@ -109,6 +111,79 @@ ipcMain.handle('chat:start', (_, url) => chat.start(url))
 ipcMain.handle('chat:stop', () => chat.stop())
 ipcMain.handle('device:info', (_, serial) => deviceInfo(serial))
 ipcMain.handle('device:perf', (_, serial) => perf(serial))
+// iPhone / iPad: USB (Mac) and the built-in AirPlay receiver
+ipcMain.handle('ios:list', () => ({ usb: iosUsb(), airplay: !!uxplayPath(), mac }))
+ipcMain.handle('ios:start', (_, src) => iosStart(src, send))
+ipcMain.handle('ios:stop', () => iosStop())
+ipcMain.handle('airplay:install', () => installUxplay().then(() => true))
+app.on('will-quit', () => { iosStop(); stopWatch() })
+// ---- YouTube sign-in (for chat replies) and Studio window ----
+const yt = () => esession.fromPartition('persist:youtube')
+const ytWin = url => { const w = new BrowserWindow({ width: 1100, height: 780, parent: win, title: 'YouTube', webPreferences: { partition: 'persist:youtube' } }); w.loadURL(url); return w }
+ipcMain.handle('yt:status', async () => !!(await yt().cookies.get({ url: 'https://www.youtube.com', name: 'SAPISID' })).length)
+ipcMain.handle('yt:login', () => new Promise(res => { const w = ytWin('https://accounts.google.com/ServiceLogin?service=youtube&continue=https%3A%2F%2Fwww.youtube.com%2F'); w.on('closed', () => res(true)) }))
+ipcMain.handle('yt:logout', () => yt().clearStorageData())
+ipcMain.handle('yt:studio', (_, url) => { ytWin(url || 'https://studio.youtube.com/channel/UC/livestreaming'); return true })
+ipcMain.handle('chat:send', async (_, text) => { // posts as the signed-in YouTube account
+  const i = chat?.info
+  if (!i?.vid) throw new Error('Connect the YouTube chat first.')
+  const s = yt(), sid = (await s.cookies.get({ url: 'https://www.youtube.com', name: 'SAPISID' }))[0]?.value
+  if (!sid) throw new Error('Sign in to YouTube in Meroro to send chat replies.')
+  const page = await (await s.fetch(`https://www.youtube.com/live_chat?is_popout=1&v=${i.vid}`)).text()
+  const params = page.match(/"sendLiveChatMessageEndpoint":\{"params":"([^"]+)"/)?.[1]
+  if (!params) throw new Error('YouTube did not allow sending in this chat (chat closed, or you are not signed in).')
+  const ts = Math.floor(Date.now() / 1000), hash = createRequire(__filename)('node:crypto').createHash('sha1').update(`${ts} ${sid} https://www.youtube.com`).digest('hex')
+  const r = await s.fetch(`https://www.youtube.com/youtubei/v1/live_chat/send_message?key=${i.key}&prettyPrint=false`, { method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `SAPISIDHASH ${ts}_${hash}`, 'X-Origin': 'https://www.youtube.com', Origin: 'https://www.youtube.com' },
+    body: JSON.stringify({ context: { client: { clientName: 'WEB', clientVersion: i.ver } }, params, richMessage: { textSegments: [{ text }] } }) })
+  if (!r.ok) throw new Error('YouTube refused the message (' + r.status + ')')
+  return true
+})
+
+// ---- global hotkeys (soundboard, mute) ----
+ipcMain.handle('hotkeys:set', (_, list) => {
+  globalShortcut.unregisterAll()
+  const acc = k => k.replace(/^(Shift|Ctrl|Alt)\+/g, m => ({ 'Shift+': 'Shift+', 'Ctrl+': 'CommandOrControl+', 'Alt+': 'Alt+' })[m]).replace(/Key([A-Z])$/, '$1').replace(/Digit(\d)$/, '$1').replace(/Numpad(\d)$/, 'num$1')
+  for (const { id, key } of list) { try { if (key && !/^(Mouse|Wheel|Pad)/.test(key)) globalShortcut.register(acc(key), () => send('hotkey', id)) } catch {} }
+  return true
+})
+app.on('will-quit', () => globalShortcut.unregisterAll())
+
+// ---- updates from GitHub Releases ----
+const REPO = 'kali23041/Meroro'
+const newer = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return false }
+ipcMain.handle('update:check', async () => {
+  const r = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { headers: { Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(8000) })
+  if (!r.ok) return null
+  const j = await r.json(), v = (j.tag_name || '').replace(/^v/, '')
+  const a = j.assets?.find(x => mac ? x.name.endsWith(`${process.arch}.dmg`) || x.name.endsWith('.dmg') : x.name.endsWith('.exe'))
+  return v && newer(v, app.getVersion()) && a ? { version: v, notes: (j.body || '').slice(0, 600), url: a.browser_download_url, name: a.name } : null
+})
+ipcMain.handle('update:install', async (_, u) => { // download → install → relaunch
+  const file = join(app.getPath('temp'), u.name)
+  const r = await fetch(u.url); if (!r.ok) throw new Error('Download failed')
+  writeFileSync(file, Buffer.from(await r.arrayBuffer()))
+  if (mac) {
+    const mnt = join(app.getPath('temp'), 'meroro-update')
+    await new Promise((res, rej) => execFile('hdiutil', ['attach', '-nobrowse', '-quiet', '-mountpoint', mnt, file], e => e ? rej(e) : res()))
+    const dest = app.getPath('exe').replace(/\/Contents\/MacOS\/.*$/, '')
+    await new Promise((res, rej) => execFile('ditto', [join(mnt, 'Meroro.app'), dest], e => e ? rej(e) : res()))
+    execFile('hdiutil', ['detach', '-quiet', mnt], () => {})
+    app.relaunch(); app.exit(0)
+  } else { spawn(file, ['/S', '--force-run'], { detached: true, stdio: 'ignore' }).unref(); app.exit(0) }
+})
+
+// Clean screen: the record of what was changed lives on disk, so it can be undone even after a crash or restart
+const cleanFile = serial => join(app.getPath('userData'), `clean-${serial.replace(/\W/g, '_')}.json`)
+const cleanSaved = serial => { try { return JSON.parse(readFileSync(cleanFile(serial), 'utf8')) } catch { return null } }
+ipcMain.handle('clean:status', (_, serial) => !!cleanSaved(serial))
+ipcMain.handle('clean:apps', (_, serial) => overlayApps(serial).then(a => [...new Set([...a, ...(cleanSaved(serial)?.denied || [])])]))
+ipcMain.handle('clean:set', async (_, serial, on, o) => {
+  const old = cleanSaved(serial)
+  if (old) { await cleanOff(serial, old); try { unlinkSync(cleanFile(serial)) } catch {} }
+  if (on) writeFileSync(cleanFile(serial), JSON.stringify(await cleanOn(serial, o)))
+  return on
+})
 ipcMain.handle('app:info', (_, serial, pkg) => appInfo(serial, pkg))
 ipcMain.handle('app:action', (_, serial, pkg, act) => appAction(serial, pkg, act))
 ipcMain.handle('device:shot', async (_, serial) => {
@@ -195,9 +270,10 @@ ipcMain.on('out:stop', (_, id) => {
 })
 
 // ---- scene sources: files, screen/window capture, offscreen web pages ----
-ipcMain.handle('file:pick', async (_, kind) => {
-  const filters = [kind === 'image' ? { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] } : kind === 'audio' ? { name: 'Audio', extensions: ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'] } : { name: 'Videos', extensions: ['mp4', 'webm', 'mov', 'm4v'] }]
-  return (await dialog.showOpenDialog(win, { properties: ['openFile'], filters })).filePaths[0] || ''
+ipcMain.handle('file:pick', async (_, kind, many) => {
+  const filters = [kind === 'lut' ? { name: 'LUT', extensions: ['cube'] } : kind === 'image' ? { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] } : kind === 'audio' ? { name: 'Audio', extensions: ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'] } : { name: 'Videos', extensions: ['mp4', 'webm', 'mov', 'm4v'] }]
+  const r = (await dialog.showOpenDialog(win, { properties: many ? ['openFile', 'multiSelections'] : ['openFile'], filters })).filePaths
+  return many ? r : r[0] || ''
 })
 ipcMain.handle('file:read', (_, p) => readFile(p))
 let pickId = ''

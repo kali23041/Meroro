@@ -84,4 +84,9 @@ if (!existsSync(icon)) {
   ihdr.writeUInt32BE(N, 0); ihdr.writeUInt32BE(N, 4); ihdr[8] = 8; ihdr[9] = 6
   writeFileSync(icon, Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(px)), chunk('IEND', Buffer.alloc(0))]))
 }
+// iPhone USB capture helper (Mac only): built from native/ioscap.swift with the Xcode command line tools.
+if (!win && !existsSync(join(dir, 'ioscap'))) {
+  try { execFileSync('swiftc', ['-O', join(root, 'native', 'ioscap.swift'), '-o', join(dir, 'ioscap')], { stdio: 'inherit' }) }
+  catch { console.warn('swiftc not found: iPhone USB capture is disabled (install Xcode command line tools)') }
+}
 console.log('binaries ready in', dir)

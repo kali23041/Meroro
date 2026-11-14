@@ -207,13 +207,27 @@ export function Automation({ s, set, test, appRules, chatBox, stopSound }) {
 
 // Compact automation for the right panel: chat triggers and phone-app scene rules, stacked.
 export function AutoPanel({ s, set, test, appRules, stopSound }) {
-  const [tab, setTab] = useState('rules')
+  const [tab, setTab] = useState('rules'), [yt, setYt] = useState(null)
+  useEffect(() => { if (tab === 'cmds') api.invoke('yt:status').then(setYt) }, [tab])
+  const cmds = s.cmds || [], upC = (id, p) => set({ cmds: cmds.map(c => c.id === id ? { ...c, ...p } : c) })
   const rules = s.autos || [], up = (id, p) => set({ autos: rules.map(r => r.id === id ? { ...r, ...p } : r) })
   const add = o => set({ autos: [...rules, { id: uid(), enabled: true, on: 'superchat', arg: '', alert: '', sub: '', sound: '', scene: '', ...o }] })
   return (
     <div className="space-y-1.5">
-      <Segmented value={tab} onChange={setTab} options={[['rules', 'Chat triggers', Zap], ['apps', 'Phone apps', AppWindow]]} />
-      {tab === 'apps' ? appRules : <>
+      <Segmented value={tab} onChange={setTab} options={[['rules', 'Triggers', Zap], ['cmds', 'Commands', MessageSquare], ['apps', 'Apps', AppWindow]]} />
+      {tab === 'cmds' ? <>
+        <div className="flex items-center gap-2 rounded-xl bg-[#242427] p-2.5 text-[12px]">
+          <span className={cx('size-2 rounded-full', yt ? 'bg-emerald-400' : 'bg-zinc-600')} /><span className="flex-1 text-zinc-300">{yt ? 'Signed in to YouTube' : 'Sign in so Meroro can reply in chat'}</span>
+          {yt ? <Button className="h-7" onClick={async () => { await api.invoke('yt:logout'); setYt(false) }}>Sign out</Button> : <Button variant="primary" className="h-7" onClick={async () => { await api.invoke('yt:login'); setYt(await api.invoke('yt:status')) }}>Sign in</Button>}
+        </div>
+        <Button className="w-full h-8" onClick={() => set({ cmds: [...cmds, { id: uid(), on: true, trigger: '!discord', reply: 'Join our Discord: discord.gg/…', cd: 30 }] })}><Plus size={12} />Add command</Button>
+        {cmds.map(c => <div key={c.id} className={cx('rounded-xl bg-[#242427] p-2.5 space-y-1.5', !c.on && 'opacity-60')}>
+          <div className="flex items-center gap-1.5"><Switch checked={c.on} onChange={on => upC(c.id, { on })} /><Input className="flex-1" value={c.trigger} onChange={e => upC(c.id, { trigger: e.target.value })} placeholder="!command" />
+            <Select className="w-[86px]" value={String(c.cd)} onChange={v => upC(c.id, { cd: +v })} options={[['5', '5 s'], ['30', '30 s'], ['60', '1 min'], ['300', '5 min']]} />
+            <Button variant="ghost" className="px-1.5" onClick={() => set({ cmds: cmds.filter(x => x.id !== c.id) })}><Trash2 size={12} /></Button></div>
+          <Input value={c.reply} onChange={e => upC(c.id, { reply: e.target.value })} placeholder="Reply ({name} = who asked)" />
+        </div>)}
+      </> : tab === 'apps' ? appRules : <>
         <div className="flex gap-1.5">
           <Select className="flex-1" value="" onChange={v => add(v === 'new' ? {} : IDEAS[+v][1])} options={[['', 'Add rule…'], ['new', 'Blank rule'], ...IDEAS.map(([t], i) => [String(i), t])]} />
           <Button title="Stop sound" onClick={stopSound}><Square size={11} /></Button>

@@ -13,7 +13,7 @@ const shooter = extra => [
   T('Fire', 'MouseLeft', 0.9, 0.62, { kind: 'fire' }), T('Scope / ADS', 'MouseRight', 0.94, 0.44), T('Jump', 'Space', 0.95, 0.74),
   T('Crouch', 'KeyC', 0.87, 0.9), T('Prone', 'KeyZ', 0.94, 0.9), T('Reload', 'KeyR', 0.8, 0.9),
   T('Weapon 1', 'Digit1', 0.44, 0.92), T('Weapon 2', 'Digit2', 0.56, 0.92), T('Pick up / Use', 'KeyF', 0.68, 0.52),
-  T('Map', 'KeyM', 0.94, 0.12), T('Bag', 'Tab', 0.64, 0.92), ...extra
+  T('Map', 'KeyM', 0.94, 0.12, { cursor: true }), T('Bag', 'Tab', 0.64, 0.92, { cursor: true }), ...extra
 ]
 export const KEYMAPS = {
   bgmi: { name: 'BGMI', pkg: 'com.pubg.imobile', items: shooter([
@@ -50,7 +50,27 @@ export const combo = e => {
   const mod = /^(Shift|Control|Alt|Meta)/.test(e.code)
   return (!mod && e.shiftKey ? 'Shift+' : '') + (!mod && e.ctrlKey ? 'Ctrl+' : '') + (!mod && e.altKey ? 'Alt+' : '') + e.code
 }
-export const keyName = k => !k ? 'Unset' : k.replace(/Key|Digit|Left$/g, '').replace('Mouse', 'Mouse ').replace('Control', 'Ctrl').replace('Wheel', 'Wheel ')
+export const PAD = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'Back', 'Start', 'LS', 'RS', 'Up', 'Down', 'Left', 'Right', 'Home']
+export const keyName = k => !k ? 'Unset' : k.startsWith('Pad') ? '🎮 ' + k.slice(3) : k.replace(/Key|Digit|Left$/g, '').replace('Mouse', 'Mouse ').replace('Control', 'Ctrl').replace('Wheel', 'Wheel ')
+
+// Screen triggers: sample a few spots of the live phone picture and compare with colours recorded when a menu was open.
+let sc
+export function samplePts(frame, pts) {
+  sc ??= document.createElement('canvas')
+  const w = 192, h = Math.max(2, Math.round((w * frame.displayHeight) / frame.displayWidth))
+  if (sc.width !== w || sc.height !== h) { sc.width = w; sc.height = h }
+  const c = sc.getContext('2d', { willReadFrequently: true })
+  try { c.drawImage(frame, 0, 0, w, h) } catch { return null }
+  return pts.map(p => {
+    const x = Math.min(w - 2, Math.max(1, Math.round(p.x * w))), y = Math.min(h - 2, Math.max(1, Math.round(p.y * h))), d = c.getImageData(x - 1, y - 1, 3, 3).data
+    let r = 0, g = 0, b = 0; for (let i = 0; i < 36; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2] }
+    return [r / 9, g / 9, b / 9]
+  })
+}
+export function matchTrigger(frame, t) {
+  const cs = samplePts(frame, t.points)
+  return !!cs && t.points.every((p, i) => Math.hypot(p.c[0] - cs[i][0], p.c[1] - cs[i][1], p.c[2] - cs[i][2]) < (t.tol || 40))
+}
 
 export class Mapper {
   items = []; opts = MAP_DEFAULTS; held = new Set(); active = new Map(); stickOn = null; lookAt = null
@@ -81,6 +101,7 @@ export class Mapper {
   }
   press(it) {
     const s = this.slot(it)
+    if (it.cursor) setTimeout(() => this.onCursor?.(it), 80) // map / bag keys also free the mouse
     if (it.type === 'swipe') { this.touch(0, s, it.x, it.y); for (let k = 1; k <= 4; k++) setTimeout(() => this.touch(2, s, it.x + it.dx * k / 4, it.y + it.dy * k / 4), k * 12); setTimeout(() => this.touch(1, s, it.x + it.dx, it.y + it.dy), 70) }
     else if (it.type === 'freelook') { this.free = { it, p: [it.x, it.y] }; this.touch(0, s, it.x, it.y) }
     else if (it.type === 'skill') { this.aim = [0, 0]; this.cast = it; this.touch(0, s, it.x, it.y) }
@@ -104,6 +125,8 @@ export class Mapper {
     const j = this.items.find(i => i.type === 'joystick'), z = this.size()
     if (!j || !z) return
     const h = k => k && this.held.has(k), vx = (h(j.right) ? 1 : 0) - (h(j.left) ? 1 : 0), vy = (h(j.down) ? 1 : 0) - (h(j.up) ? 1 : 0)
+    const pd = this.pad, an = !vx && !vy && pd && Math.hypot(pd[0], pd[1]) > 0.2 // controller left stick (analog)
+    if (an) { const m = Math.min(1, Math.hypot(pd[0], pd[1])), p = [j.x + pd[0] / Math.max(1, m) * j.r * (z.h / z.w), j.y + pd[1] / Math.max(1, m) * j.r]; if (!this.stickOn) this.touch(0, 1, j.x, j.y); this.touch(2, 1, ...p); this.stickOn = p; return }
     if (!vx && !vy) { if (this.stickOn) { this.touch(1, 1, ...this.stickOn); this.stickOn = null } return }
     const walk = h(j.walk), n = Math.hypot(vx, vy), r = j.r * (h(j.sprint) || (j.sprint === 'ShiftLeft' && this.held.has('ShiftRight')) ? j.mul : walk ? 0.45 : 1)
     const p = [j.x + (vx / n) * r * (z.h / z.w), j.y + (vy / n) * r] // radius is a fraction of screen height

@@ -1,30 +1,34 @@
 // "Add source" window: pick a kind of source, then (for screens, windows, cameras) pick exactly which one.
 import { useEffect, useState } from 'react'
-import { Smartphone, Webcam, Monitor, AppWindow, Image as ImageIcon, Film, Globe, MessageSquare, BellRing, Type, Clock, Palette, X, ChevronLeft, RefreshCw } from 'lucide-react'
+import { PanelBottom, Target, EyeOff, Layers, TabletSmartphone, Usb, Cast, Download, Loader2, Smartphone, Webcam, Monitor, AppWindow, Image as ImageIcon, Film, Globe, MessageSquare, BellRing, Type, Clock, Palette, X, ChevronLeft, RefreshCw } from 'lucide-react'
 import { Button, Input, Tabs, cx } from './ui'
 import { newLayer } from './scene'
 import { AppIcon } from './Library'
 
 const api = window.api
 const KINDS = [
-  ['phone', 'Phone', 'Your Android screen', Smartphone], ['screen', 'Screen', 'A whole display', Monitor], ['window', 'Window', 'One app window', AppWindow],
+  ['phone', 'Android', 'Android phone · USB or Wi-Fi', Smartphone], ['ios', 'iPhone / iPad', 'USB (Mac) or AirPlay', TabletSmartphone], ['screen', 'Screen', 'A whole display', Monitor], ['window', 'Window', 'One app window', AppWindow],
   ['webcam', 'Webcam', 'Camera / facecam', Webcam], ['image', 'Image', 'PNG, JPG, GIF', ImageIcon], ['video', 'Video file', 'MP4, MOV, WebM', Film],
   ['browser', 'Web page', 'Alerts, widgets', Globe], ['chat', 'YouTube chat', 'Live chat box', MessageSquare], ['alert', 'Alert box', 'Super Chat pop-up', BellRing],
-  ['text', 'Text', 'Title or label', Type], ['clock', 'Clock', 'Live time', Clock], ['color', 'Color', 'Solid or gradient', Palette]
+  ['text', 'Text', 'Title or label', Type], ['clock', 'Clock', 'Live time', Clock], ['color', 'Color', 'Solid or gradient', Palette],
+  ['lower', 'Lower third', 'Name that slides in', PanelBottom], ['goal', 'Goal bar', 'Super Chat / member goal', Target], ['mask', 'Blur box', 'Hide an area on stream', EyeOff], ['scene', 'Scene', 'Reuse another scene', Layers]
 ]
 
 export default function AddSource({ only, cams, onPick, onClose, front, meta, onAddApp }) {
   const [kind, setKind] = useState(only ? 'screen' : ''), [shots, setShots] = useState(null), [tab, setTab] = useState('screen'), [url, setUrl] = useState('')
+  const [ios, setIos] = useState(null), [inst, setInst] = useState('')
+  useEffect(() => { if (kind !== 'ios') return; const f = () => api.invoke('ios:list').then(setIos).catch(() => {}); f(); const t = setInterval(f, 2000); return () => clearInterval(t) }, [kind])
+  const install = async () => { setInst('busy'); try { await api.invoke('airplay:install'); setInst('') } catch (e) { setInst(String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')) } }
   const load = () => { setShots(null); api.invoke('screen:thumbs').then(setShots).catch(() => setShots([])) }
   useEffect(() => { if (kind === 'screen' || kind === 'window') { setTab(kind); load() } }, [kind])
   const add = (type, o) => { onPick({ ...newLayer(type), ...o }); onClose() }
   const choose = async k => {
-    if (k === 'screen' || k === 'window') return setKind(k)
+    if (k === 'screen' || k === 'window' || k === 'ios') return setKind(k)
     if (k === 'image' || k === 'video') { const src = await api.invoke('file:pick', k); return src && add(k, { src, name: src.split(/[\\/]/).pop() }) }
     add(k)
   }
   const list = (shots || []).filter(x => x.id.startsWith(tab))
-  const title = !kind ? 'Add source' : only ? 'Choose a screen or window for the backdrop' : kind === 'webcam' ? 'Choose a camera' : kind === 'browser' ? 'Web page' : 'Choose what to capture'
+  const title = !kind ? 'Add source' : only ? 'Choose a screen or window for the backdrop' : kind === 'ios' ? 'Add an iPhone or iPad' : kind === 'webcam' ? 'Choose a camera' : kind === 'browser' ? 'Web page' : 'Choose what to capture'
 
   return (
     <div className="absolute inset-0 z-50 grid place-items-center bg-black/50 backdrop-blur-md" onPointerDown={e => e.target === e.currentTarget && onClose()}>
@@ -63,6 +67,29 @@ export default function AddSource({ only, cams, onPick, onClose, front, meta, on
                 </button>
               ))}
             </div>)}
+          {kind === 'ios' && <div className="space-y-4">
+            <div>
+              <div className="mb-2 flex items-center gap-1.5 text-[12px] font-semibold text-white"><Usb size={13} />USB cable</div>
+              {!ios ? <div className="text-[12px] text-zinc-500">Looking…</div>
+                : !ios.mac ? <div className="rounded-xl bg-white/[0.04] p-3 text-[12px] text-zinc-400">USB capture of an iPhone works on Mac. On Windows, use AirPlay below.</div>
+                : !ios.usb.length ? <div className="rounded-xl bg-white/[0.04] p-3 text-[12px] leading-relaxed text-zinc-400">No iPhone or iPad found. Plug it in with a cable, unlock it and tap <b className="text-zinc-200">Trust</b>. It shows up here by itself.</div>
+                : <div className="grid grid-cols-2 gap-2">{ios.usb.map(d => (
+                  <button key={d.id} onClick={() => add('ios', { src: 'usb:' + d.id, name: d.name })} className="flex items-center gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.04] p-3 text-left hover:bg-white/[0.1]">
+                    <span className="size-9 rounded-xl bg-white/[0.08] grid place-items-center"><TabletSmartphone size={17} /></span>
+                    <span className="min-w-0"><span className="block truncate text-[13px] font-medium text-white">{d.name}</span><span className="block text-[11px] text-zinc-500">USB · sharp, low delay</span></span>
+                  </button>))}</div>}
+            </div>
+            <div>
+              <div className="mb-2 flex items-center gap-1.5 text-[12px] font-semibold text-white"><Cast size={13} />AirPlay (wireless)</div>
+              <div className="flex items-center gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.04] p-3">
+                <span className="size-9 rounded-xl bg-white/[0.08] grid place-items-center"><Cast size={17} /></span>
+                <span className="flex-1 min-w-0"><span className="block text-[13px] font-medium text-white">Meroro AirPlay receiver</span>
+                  <span className="block text-[11px] leading-snug text-zinc-500">{ios?.airplay ? 'On the iPhone: Control Center → Screen Mirroring → Meroro' : inst && inst !== 'busy' ? <span className="text-red-400">{inst}</span> : 'Needs the free UxPlay receiver (installed with one click)'}</span></span>
+                {ios?.airplay ? <Button variant="primary" className="h-9 px-4" onClick={() => add('ios', { src: 'airplay', name: 'iPhone (AirPlay)' })}>Add</Button>
+                  : <Button className="h-9 px-3" disabled={inst === 'busy' || !ios} onClick={install}>{inst === 'busy' ? <><Loader2 size={13} className="animate-spin" />Installing…</> : <><Download size={13} />Install</>}</Button>}
+              </div>
+            </div>
+          </div>}
           {kind === 'webcam' && <div className="space-y-1.5">
             {[['default', 'System default camera'], ...cams].map(([id, name]) => (
               <button key={id} onClick={() => add('webcam', { src: id, fit: 'cover', name: id === 'default' ? 'Webcam' : name })} className="w-full flex items-center gap-3 rounded-xl bg-white/[0.04] border border-white/[0.07] px-3 h-11 text-left hover:bg-white/[0.1]">

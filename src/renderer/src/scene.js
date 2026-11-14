@@ -2,8 +2,9 @@
 // Layer boxes are stored as fractions of the canvas (x,y = centre) so they survive canvas changes.
 export const uid = () => Math.random().toString(36).slice(2, 9)
 
-export const TYPES = [['phone', 'Phone'], ['webcam', 'Webcam'], ['screen', 'Screen / window'], ['image', 'Image'], ['video', 'Video file'],
-  ['browser', 'Web page / alerts'], ['chat', 'YouTube chat'], ['alert', 'Alert box (Super Chat)'], ['text', 'Text'], ['clock', 'Clock'], ['color', 'Color / gradient']]
+export const TYPES = [['phone', 'Android phone'], ['ios', 'iPhone / iPad'], ['webcam', 'Webcam'], ['screen', 'Screen / window'], ['image', 'Image'], ['video', 'Video file'],
+  ['browser', 'Web page / alerts'], ['chat', 'YouTube chat'], ['alert', 'Alert box (Super Chat)'], ['text', 'Text'], ['clock', 'Clock'], ['color', 'Color / gradient'],
+  ['lower', 'Lower third'], ['goal', 'Goal bar'], ['mask', 'Blur / mask box'], ['scene', 'Scene (nested)']]
 
 const G0 = { b: 1, c: 1, s: 1, hue: 0, sepia: 0, blur: 0 }
 export const GRADES = {
@@ -18,7 +19,11 @@ export const L = (type, o = {}) => ({
   ...(type === 'text' ? { text: 'Your text', color: '#ffffff', bg: '#000000', bgOn: true, h: 0.08, radius: 0.5 } : {}),
   ...(type === 'chat' ? { x: 0.84, y: 0.6, w: 0.3, h: 0.5, radius: 0.04, fit: 'stretch' } : {}),
   ...(type === 'alert' ? { x: 0.5, y: 0.14, w: 0.5, h: 0.14, radius: 0.3, fit: 'stretch' } : {}),
-  ...(type === 'color' ? { color: '#7c3aed', color2: '#ec4899', fit: 'stretch' } : {}), ...o
+  ...(type === 'color' ? { color: '#7c3aed', color2: '#ec4899', fit: 'stretch' } : {}),
+  ...(type === 'lower' ? { x: 0.3, y: 0.82, w: 0.42, h: 0.12, fit: 'stretch', title: 'Your Name', sub: 'Live on YouTube', style: 'bar', color: '#f97316', hold: 6 } : {}),
+  ...(type === 'goal' ? { x: 0.5, y: 0.06, w: 0.5, h: 0.06, fit: 'stretch', label: 'Super Chat goal', cur: 0, target: 1000, prefix: '₹', auto: 'superchat', color: '#f97316' } : {}),
+  ...(type === 'mask' ? { x: 0.85, y: 0.1, w: 0.2, h: 0.12, fit: 'stretch', mode: 'blur', amount: 0.6, color: '#000000' } : {}),
+  ...(type === 'scene' ? { x: 0.8, y: 0.75, w: 0.3, h: 0.3, src: '', fit: 'contain' } : {}), ...o
 })
 export const newLayer = type => type === 'clock' ? L('text', { name: 'Clock', text: '{time}', x: 0.9, y: 0.08, h: 0.06 }) : L(type)
 
