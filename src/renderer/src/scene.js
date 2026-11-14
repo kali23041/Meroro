@@ -69,3 +69,37 @@ export const SIZES = [
   ['1080x1920', 'Shorts · TikTok · Reels', '9:16 vertical'], ['720x1280', 'Vertical 720p', '9:16 · light'], ['1080x1350', 'Instagram portrait', '4:5 feed'],
   ['1080x1080', 'Instagram square', '1:1'], ['1080x2400', 'Phone (tall)', '9:20 portrait'], ['2400x1080', 'Phone (wide)', '20:9 landscape'], ['1440x1080', 'Classic', '4:3']
 ]
+
+// ---------- game presets: pick a game, then a layout (horizontal 16:9 or vertical 9:16) ----------
+export const GAMES = [
+  { id: 'bgmi', name: 'BGMI', pkg: 'com.pubg.imobile' }, { id: 'ff', name: 'Free Fire MAX', pkg: 'com.dts.freefiremax' },
+  { id: 'codm', name: 'Call of Duty: Mobile', pkg: 'com.activision.callofduty.shooter' }, { id: 'mlbb', name: 'Mobile Legends', pkg: 'com.mobile.legends' },
+  { id: 'genshin', name: 'Genshin Impact', pkg: 'com.miHoYo.GenshinImpact' }, { id: 'mcpe', name: 'Minecraft', pkg: 'com.mojang.minecraftpe' },
+  { id: 'asphalt', name: 'Asphalt Legends', pkg: 'com.gameloft.android.ANMP.GloftA9HM' },
+  { id: 'cr', name: 'Clash Royale', pkg: 'com.supercell.clashroyale', portrait: true }, { id: 'pogo', name: 'Pokémon GO', pkg: 'com.nianticlabs.pokemongo', portrait: true },
+  { id: 'cs2', name: 'Counter-Strike 2', steam: 730, pc: true }, { id: 'gta', name: 'GTA V', steam: 271590, pc: true }, { id: 'pubgpc', name: 'PUBG: Battlegrounds', steam: 578080, pc: true },
+  { id: 'apex', name: 'Apex Legends', steam: 1172470, pc: true }, { id: 'dota', name: 'Dota 2', steam: 570, pc: true }, { id: 'cyber', name: 'Cyberpunk 2077', steam: 1091500, pc: true },
+  { id: 'rust', name: 'Rust', steam: 252490, pc: true }, { id: 'elden', name: 'Elden Ring', steam: 1245620, pc: true }
+]
+export const steamArt = id => `https://cdn.cloudflare.steamstatic.com/steam/apps/${id}/capsule_231x87.jpg`
+
+const H = { canvas: '1920x1080' }
+export const LAYOUTS = [
+  { id: 'full', name: 'Fullscreen + facecam', v: false, make: b => [b({ w: 1, h: 1, fit: 'cover' }), cam({ x: 0.1, y: 0.8, w: 0.17, h: 0.302, radius: 0.5, border: 5 })] },
+  { id: 'clean', name: 'Clean gameplay', v: false, make: b => [b({ w: 1, h: 1, fit: 'cover' })] },
+  { id: 'pro', name: 'Facecam frame + title', v: false, make: (b, g) => [b({ w: 1, h: 1, fit: 'cover' }),
+    cam({ x: 0.13, y: 0.2, w: 0.22, h: 0.3, radius: 0.08, border: 5, borderColor: '#e4e4e7', shadow: 0.5 }), text(`${g.name.toUpperCase()} LIVE`, { x: 0.5, y: 0.94, h: 0.055, bg: '#18181b' })] },
+  { id: 'side', name: 'Game + cam side panel', v: false, make: b => [b({ x: 0.36, y: 0.5, w: 0.7, h: 0.7, radius: 0.03, shadow: 0.5 }),
+    cam({ x: 0.85, y: 0.32, w: 0.26, h: 0.36, radius: 0.06 }), L('chat', { x: 0.85, y: 0.74, w: 0.26, h: 0.4 })], bg: true },
+  { id: 'vsplit', name: 'Game top, cam bottom', v: true, make: b => [b({ x: 0.5, y: 0.25, w: 1, h: 0.5, fit: 'cover' }), cam({ x: 0.5, y: 0.75, w: 1, h: 0.5 })] },
+  { id: 'vzoom', name: 'Zoomed + facecam', v: true, make: (b, g) => [b({ w: 1, h: 1, fit: 'cover' }), cam({ x: 0.5, y: 0.82, w: 0.36, h: 0.2025, radius: 0.5, border: 6 }),
+    text(`${g.name.toUpperCase()} LIVE`, { x: 0.5, y: 0.06, h: 0.035, bg: '#18181b' })] },
+  { id: 'vchat', name: 'Game + chat', v: true, make: b => [b({ x: 0.5, y: 0.22, w: 1, h: 0.32 }), L('chat', { x: 0.5, y: 0.66, w: 0.92, h: 0.5, radius: 0.04 }),
+    cam({ x: 0.84, y: 0.06, w: 0.24, h: 0.135, radius: 0.5, border: 4 })], bg: true }
+]
+export function gamePreset(g, lay) {
+  const base = o => L(g.pc ? 'screen' : 'phone', { name: g.name, grade: grade('Vivid'), ...o, ...(g.portrait && !lay.v ? { x: 0.5, y: 0.5, w: 0.5, h: 0.96, fit: 'contain', radius: 0.04 } : {}) })
+  const set = { ...(lay.v ? V : H), fps: 60, bitrate: 9000, ...(g.pc ? {} : { capFps: 60, maxSize: 1920, capBitrate: 12, mode: 'app', appMode: 'guard', pkg: g.pkg }) }
+  return { set, scene: S(`${g.name} · ${lay.name}`, lay.make(base, g), { bgBlur: lay.bg || (g.portrait && !lay.v) }) }
+}
+export const STUDIO = ['Phone · blurred backdrop', 'Just chatting · cam + phone', 'Starting soon', 'Be right back', 'Vertical · Phone fullscreen', 'Vertical · Phone framed + facecam', 'Vertical · Just chatting']

@@ -8,7 +8,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { splashWindow } from './splash'
 import { BRAND } from '../shared/brand'
 import { Chat } from './chat'
-import { adb, listDevices, listApps, foreground, deviceInfo, appInfo, appAction, screenshot, Session, FFMPEG } from './phone'
+import { adb, listDevices, listApps, foreground, deviceInfo, perf, appInfo, appAction, screenshot, Session, FFMPEG } from './phone'
 
 const mac = process.platform === 'darwin'
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
@@ -108,6 +108,7 @@ const chat = new Chat(m => send('chat:msg', m))
 ipcMain.handle('chat:start', (_, url) => chat.start(url))
 ipcMain.handle('chat:stop', () => chat.stop())
 ipcMain.handle('device:info', (_, serial) => deviceInfo(serial))
+ipcMain.handle('device:perf', (_, serial) => perf(serial))
 ipcMain.handle('app:info', (_, serial, pkg) => appInfo(serial, pkg))
 ipcMain.handle('app:action', (_, serial, pkg, act) => appAction(serial, pkg, act))
 ipcMain.handle('device:shot', async (_, serial) => {

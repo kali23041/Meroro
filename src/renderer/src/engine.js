@@ -42,6 +42,7 @@ export class Engine {
   sounds = {}
   focus = ''
   ts = 0
+  keep = [] // recently replaced phone frames, still possibly referenced by a pending canvas draw
 
   constructor(canvas) {
     this.canvas = canvas
@@ -100,7 +101,7 @@ export class Engine {
     if (p.key) {
       if (!this.dec || this.dec.state !== 'configured') {
         this.dec = new VideoDecoder({
-          output: f => { this.frame?.close(); this.frame = f },
+          output: f => { this.nframes = (this.nframes || 0) + 1; this.keep.push(this.frame); this.frame = f; while (this.keep.length > 3) this.keep.shift()?.close() }, // the GPU canvas draws lazily: close old frames a few frames later, not at once
           error: e => { console.warn('decoder', e); this.needKey = true }
         })
         this.dec.configure({ codec: avcCodec(this.cfg), optimizeForLatency: true })
@@ -115,7 +116,7 @@ export class Engine {
 
   pushAudio(d) { this.pcm?.port.postMessage(new Int16Array(d.buffer, d.byteOffset, d.byteLength >> 1)) }
 
-  clear() { this.frame?.close(); this.frame = null; this.rect = null; this.cfg = null; this.focus = '' }
+  clear() { this.frame?.close(); this.frame = null; this.keep.splice(0).forEach(f => f?.close()); this.rect = null; this.cfg = null; this.focus = '' }
 
   get hidden() { return !!(this.s.cover || (this.s.guardPkg && this.focus && this.focus !== this.s.guardPkg)) }
   get alerting() { return !!this.alert && performance.now() < this.alert.until }

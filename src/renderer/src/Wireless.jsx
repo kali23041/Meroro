@@ -25,7 +25,7 @@ export default function Wireless({ serial, usbReady, compact }) {
   return (
     <div className={cx('space-y-2', !compact && 'rounded-xl bg-white/[0.03] border border-white/[0.06] p-4')}>
       {!compact && <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider text-zinc-500"><Wifi size={13} />Wireless connection</div>}
-      {usbReady && <Button variant="primary" className="w-full h-8" disabled={st?.busy} onClick={() => run('adb:wireless', serial)}><Wifi size={13} />Switch this phone to Wi-Fi</Button>}
+      {usbReady && <Button className="w-full h-8" disabled={st?.busy} onClick={() => run('adb:wireless', serial)}><Wifi size={13} />Switch this phone to Wi-Fi</Button>}
       {found.filter(f => !f.pair).map(f => (
         <div key={f.addr} className="flex items-center gap-2 rounded-lg bg-emerald-500/10 border border-emerald-400/20 px-2 h-8">
           <Wifi size={12} className="text-emerald-300 shrink-0" /><span className="flex-1 min-w-0 truncate text-[11px]">{f.name.replace(/^adb-|-\w+$/g, '')} · {f.addr}</span>
@@ -48,10 +48,6 @@ export default function Wireless({ serial, usbReady, compact }) {
         {st.busy ? <Loader2 size={12} className="animate-spin shrink-0 mt-px" /> : st.bad ? <AlertTriangle size={12} className="shrink-0 mt-px" /> : <Check size={12} className="shrink-0 mt-px" />}<span>{st.text}</span>
       </div>}
       {st?.bad && /Local Network/.test(st.text) && <Button className="w-full" onClick={() => api.invoke('perm:open', 'network')}>Open Local Network settings</Button>}
-      <p className="text-[11px] leading-relaxed text-zinc-500">
-        {tab === 'pair' ? 'On the phone: Developer options → Wireless debugging → Pair device with pairing code. Enter the IP:port and 6-digit code shown there.'
-          : 'Phone: Developer options → Wireless debugging → use the “IP address & Port” shown there. New computer? Pair first.'}
-      </p>
     </div>
   )
 }

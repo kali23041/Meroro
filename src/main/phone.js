@@ -83,6 +83,25 @@ export async function deviceInfo(serial) {
   }
 }
 
+// Live performance: CPU load (from two /proc/stat samples), RAM, GPU load, temperatures and battery.
+const lastCpu = {}
+export async function perf(serial) {
+  const out = await adb(['-s', serial, 'shell', 'head -1 /proc/stat; grep -E "^(MemTotal|MemAvailable):" /proc/meminfo; dumpsys battery | grep -E "^  (level|temperature|AC powered|USB powered):"; ' +
+    'cat /sys/class/kgsl/kgsl-3d0/gpu_busy_percentage 2>/dev/null; for z in /sys/class/thermal/thermal_zone*; do echo "tz $(cat $z/type) $(cat $z/temp 2>/dev/null)"; done'], { timeout: 5000 })
+  const n = out.match(/^cpu\s+(.+)$/m)?.[1].trim().split(/\s+/).map(Number) || []
+  const idle = (n[3] || 0) + (n[4] || 0), total = n.reduce((a, b) => a + b, 0), p = lastCpu[serial]
+  lastCpu[serial] = { idle, total }
+  const cpu = p && total > p.total ? Math.round(100 * (1 - (idle - p.idle) / (total - p.total))) : null
+  const kb = k => +(out.match(new RegExp(k + ':\\s+(\\d+)'))?.[1] || 0)
+  const bat = k => out.match(new RegExp(k + ': (\\S+)'))?.[1]
+  const zone = re => { const v = [...out.matchAll(/^tz (\S+) (\d+)/gm)].filter(m => re.test(m[1])).map(m => +m[2] / 1000).filter(x => x > 10 && x < 100).sort((a, b) => a - b); return v.length ? v[Math.floor(v.length / 2)] : 0 } // median of real sensor readings
+  return {
+    cpu, gpu: +(out.match(/^(\d+) %/m)?.[1] ?? NaN), ramUsed: (kb('MemTotal') - kb('MemAvailable')) / 1048576, ramTotal: kb('MemTotal') / 1048576,
+    cpuTemp: zone(/^cpu-\d/), gpuTemp: zone(/^gpu/), battery: +bat('level') || 0, batTemp: (+bat('temperature') || 0) / 10,
+    charging: bat('AC powered') === 'true' || bat('USB powered') === 'true'
+  }
+}
+
 export async function appInfo(serial, pkg) {
   const out = await adb(['-s', serial, 'shell', `dumpsys package ${pkg} | grep -m6 -E 'versionName|firstInstallTime|lastUpdateTime|targetSdk'`], { timeout: 8000 }).catch(() => '')
   const g = k => out.match(new RegExp(k + '=([^\\n]+?)(\\s+\\w+=|$)', 'm'))?.[1]?.trim()

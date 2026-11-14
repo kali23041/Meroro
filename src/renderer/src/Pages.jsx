@@ -62,10 +62,10 @@ export function Home({ q, dev, front, lib }) {
 // ---------- Presets ----------
 const catOf = n => /Vertical|Shorts/.test(n) ? 'vertical' : /BGMI|Free Fire|Portrait game/.test(n) ? 'gaming' : 'studio'
 
-function Preview({ name }) {
+export function Preview({ name, preset, className }) {
   const ref = useRef()
   useEffect(() => {
-    const { scene, set } = PRESETS[name](), [W, H] = (set?.canvas || '1920x1080').split('x').map(Number)
+    const { scene, set } = preset || PRESETS[name](), [W, H] = (set?.canvas || '1920x1080').split('x').map(Number)
     const cv = ref.current, k = 360 / Math.max(W, H), w = cv.width = W * k, h = cv.height = H * k, c = cv.getContext('2d')
     const grad = (x, y, bw, bh, a, b) => { const g = c.createLinearGradient(x, y, x + bw, y + bh); g.addColorStop(0, a); g.addColorStop(1, b); return g }
     c.fillStyle = scene.bg2 ? grad(0, 0, w, h, scene.bg, scene.bg2) : scene.bgBlur ? grad(0, 0, w, h, '#1e293b', '#3b1d5e') : scene.bg
@@ -76,15 +76,15 @@ function Preview({ name }) {
       if (l.type === 'text') bw = Math.min(w * 0.9, (l.text.length * 0.3 + 0.9) * bh)
       const x = l.x * w - bw / 2, y = l.y * h - bh / 2
       c.save(); c.beginPath(); c.roundRect(x, y, bw, bh, l.radius * Math.min(bw, bh)); c.clip()
-      if (l.type === 'phone') { c.fillStyle = grad(x, y, bw, bh, '#0ea5e9', '#4f46e5'); c.fillRect(x, y, bw, bh); c.fillStyle = 'rgba(255,255,255,.25)'; c.beginPath(); c.arc(x + bw * 0.18, y + bh * 0.78, Math.min(bw, bh) * 0.1, 0, 7); c.arc(x + bw * 0.86, y + bh * 0.74, Math.min(bw, bh) * 0.07, 0, 7); c.fill() }
+      if (l.type === 'phone' || l.type === 'screen') { c.fillStyle = grad(x, y, bw, bh, '#0ea5e9', '#4f46e5'); c.fillRect(x, y, bw, bh); c.fillStyle = 'rgba(255,255,255,.25)'; c.beginPath(); c.arc(x + bw * 0.18, y + bh * 0.78, Math.min(bw, bh) * 0.1, 0, 7); c.arc(x + bw * 0.86, y + bh * 0.74, Math.min(bw, bh) * 0.07, 0, 7); c.fill() }
       else if (l.type === 'webcam') { c.fillStyle = '#334155'; c.fillRect(x, y, bw, bh); c.fillStyle = '#94a3b8'; c.beginPath(); c.arc(x + bw / 2, y + bh * 0.42, Math.min(bw, bh) * 0.2, 0, 7); c.fill(); c.beginPath(); c.arc(x + bw / 2, y + bh * 1.05, Math.min(bw, bh) * 0.42, 0, 7); c.fill() }
       else if (l.type === 'text') { if (l.bgOn) { c.fillStyle = l.bg; c.fillRect(x, y, bw, bh) } c.fillStyle = l.color; c.font = `700 ${bh * 0.5}px -apple-system, "Segoe UI", sans-serif`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(l.text.replace('{time}', '21:30'), x + bw / 2, y + bh / 2, bw * 0.9) }
       else { c.fillStyle = 'rgba(0,0,0,.55)'; c.fillRect(x, y, bw, bh); c.fillStyle = 'rgba(255,255,255,.35)'; for (let i = 0; i < 5; i++) c.fillRect(x + bw * 0.08, y + bh * (0.14 + i * 0.17), bw * (0.5 + (i % 3) * 0.15), bh * 0.06) }
       c.restore()
       if (l.border) { c.beginPath(); c.roundRect(x, y, bw, bh, l.radius * Math.min(bw, bh)); c.lineWidth = 1.5; c.strokeStyle = l.borderColor; c.stroke() }
     }
-  }, [name])
-  return <canvas ref={ref} className="max-w-full max-h-full rounded-md shadow-lg ring-1 ring-white/10" />
+  }, [name, preset])
+  return <canvas ref={ref} className={cx(className || 'max-w-full max-h-full', 'rounded-md shadow-lg ring-1 ring-white/10')} />
 }
 
 export function Presets({ apply, busy }) {
@@ -197,11 +197,46 @@ export function Automation({ s, set, test, appRules, chatBox, stopSound }) {
               </div>
             </div>
           ))}
-          <p className="text-[11px] text-zinc-600">Use {'{name}'}, {'{amount}'} and {'{text}'} in alert text. Sounds play on your speakers and in the stream. Rules need YouTube chat connected (third tab).</p>
         </div>}
         {tab === 'apps' && <div className="max-w-[560px] rounded-xl border border-white/[0.06] bg-white/[0.02]">{appRules}</div>}
         {tab === 'chat' && <div className="max-w-[560px]">{chatBox}</div>}
       </div>
+    </div>
+  )
+}
+
+// Compact automation for the right panel: chat triggers and phone-app scene rules, stacked.
+export function AutoPanel({ s, set, test, appRules, stopSound }) {
+  const [tab, setTab] = useState('rules')
+  const rules = s.autos || [], up = (id, p) => set({ autos: rules.map(r => r.id === id ? { ...r, ...p } : r) })
+  const add = o => set({ autos: [...rules, { id: uid(), enabled: true, on: 'superchat', arg: '', alert: '', sub: '', sound: '', scene: '', ...o }] })
+  return (
+    <div className="space-y-1.5">
+      <Segmented value={tab} onChange={setTab} options={[['rules', 'Chat triggers', Zap], ['apps', 'Phone apps', AppWindow]]} />
+      {tab === 'apps' ? appRules : <>
+        <div className="flex gap-1.5">
+          <Select className="flex-1" value="" onChange={v => add(v === 'new' ? {} : IDEAS[+v][1])} options={[['', 'Add rule…'], ['new', 'Blank rule'], ...IDEAS.map(([t], i) => [String(i), t])]} />
+          <Button title="Stop sound" onClick={stopSound}><Square size={11} /></Button>
+        </div>
+        {!rules.length && <div className="rounded-xl border border-dashed border-white/10 p-5 text-center text-[12px] text-zinc-500">No rules yet</div>}
+        {rules.map(r => (
+          <div key={r.id} className={cx('rounded-xl bg-[#242427] p-2.5 space-y-1.5', !r.enabled && 'opacity-60')}>
+            <div className="flex items-center gap-1.5">
+              <Switch checked={r.enabled} onChange={enabled => up(r.id, { enabled })} />
+              <Select className="flex-1 min-w-0" value={r.on} onChange={on => up(r.id, { on })} options={TRIG} />
+              <Button variant="ghost" className="px-1.5" title="Test" onClick={() => test(r)}><FlaskConical size={12} /></Button>
+              <Button variant="ghost" className="px-1.5" title="Delete" onClick={() => set({ autos: rules.filter(x => x.id !== r.id) })}><Trash2 size={12} /></Button>
+            </div>
+            {(r.on === 'command' || r.on === 'keyword') && <Input value={r.arg} onChange={e => up(r.id, { arg: e.target.value })} placeholder={r.on === 'command' ? '!hello' : 'word'} />}
+            <Input value={r.alert} onChange={e => up(r.id, { alert: e.target.value })} placeholder="Alert title, e.g. {name} sent {amount}!" />
+            <Input value={r.sub} onChange={e => up(r.id, { sub: e.target.value })} placeholder="Second line, e.g. {text}" />
+            <div className="flex gap-1.5">
+              <Button className="flex-1 min-w-0 h-8" onClick={async () => { const f = await api.invoke('file:pick', 'audio'); if (f) up(r.id, { sound: f }) }}><Music size={12} /><span className="truncate">{r.sound ? r.sound.split(/[\\/]/).pop() : 'Sound'}</span></Button>
+              <Select className="flex-1 min-w-0" value={r.scene} onChange={scene => up(r.id, { scene })} options={[['', 'No scene switch'], ...s.scenes.map(x => [x.id, x.name])]} />
+            </div>
+          </div>
+        ))}
+      </>}
     </div>
   )
 }

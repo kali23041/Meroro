@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Smartphone, Webcam, Monitor, AppWindow, Image as ImageIcon, Film, Globe, MessageSquare, BellRing, Type, Clock, Palette, X, ChevronLeft, RefreshCw } from 'lucide-react'
 import { Button, Input, Tabs, cx } from './ui'
 import { newLayer } from './scene'
+import { AppIcon } from './Library'
 
 const api = window.api
 const KINDS = [
@@ -12,13 +13,13 @@ const KINDS = [
   ['text', 'Text', 'Title or label', Type], ['clock', 'Clock', 'Live time', Clock], ['color', 'Color', 'Solid or gradient', Palette]
 ]
 
-export default function AddSource({ only, cams, onPick, onClose }) {
+export default function AddSource({ only, cams, onPick, onClose, front, meta, onAddApp }) {
   const [kind, setKind] = useState(only ? 'screen' : ''), [shots, setShots] = useState(null), [tab, setTab] = useState('screen'), [url, setUrl] = useState('')
   const load = () => { setShots(null); api.invoke('screen:thumbs').then(setShots).catch(() => setShots([])) }
   useEffect(() => { if (kind === 'screen' || kind === 'window') { setTab(kind); load() } }, [kind])
   const add = (type, o) => { onPick({ ...newLayer(type), ...o }); onClose() }
   const choose = async k => {
-    if (['screen', 'window', 'webcam', 'browser'].includes(k)) return setKind(k)
+    if (k === 'screen' || k === 'window') return setKind(k)
     if (k === 'image' || k === 'video') { const src = await api.invoke('file:pick', k); return src && add(k, { src, name: src.split(/[\\/]/).pop() }) }
     add(k)
   }
@@ -38,6 +39,12 @@ export default function AddSource({ only, cams, onPick, onClose }) {
           <Button variant="ghost" className="px-2" onClick={onClose}><X size={14} /></Button>
         </div>
         <div className="flex-1 overflow-y-auto p-4">
+          {!kind && front && <div className="mb-3 flex items-center gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.05] p-3">
+            <AppIcon app={front} meta={meta} size={44} />
+            <div className="flex-1 min-w-0"><div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-zinc-500"><span className="size-1.5 rounded-full bg-emerald-400 live-dot" />Open on phone now</div>
+              <div className="truncate text-[14px] font-semibold text-white">{front.name}</div></div>
+            <Button variant="primary" className="h-9 px-4" onClick={() => { onAddApp(front); onClose() }}><Smartphone size={14} />Add as source</Button>
+          </div>}
           {!kind && <div className="grid grid-cols-4 gap-2.5">
             {KINDS.map(([k, t, d, I]) => (
               <button key={k} onClick={() => choose(k)} className="group flex flex-col items-start gap-2 rounded-2xl border border-white/[0.07] bg-white/[0.04] p-3.5 text-left transition-all duration-200 hover:bg-white/[0.1] hover:-translate-y-0.5 hover:border-white/20">

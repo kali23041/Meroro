@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  SlidersVertical, GripHorizontal, LayoutDashboard, Sparkles, Zap, Gamepad2, Smartphone, Wifi, Usb, Radio, Circle, Square, Mic, Volume2, Headphones, Camera, Layers, ChevronLeft, Search,
+  SlidersVertical, GripHorizontal, MessageSquare, LayoutDashboard, Sparkles, Zap, Gamepad2, Smartphone, Wifi, Usb, Radio, Circle, Square, Mic, Volume2, Headphones, Camera, Layers, ChevronLeft, Search,
   AppWindow, ShieldCheck, ExternalLink, Info, X, Eye, EyeOff, RefreshCw, MousePointerClick, FolderOpen
 } from 'lucide-react'
 import { Engine } from './engine'
@@ -9,12 +9,14 @@ import Permissions from './Permissions'
 import { Logo, About, VERSION } from './Brand'
 import { useMeta, AppIcon } from './Library'
 import AddSource from './AddSource'
+import Perf from './Perf'
+import { SourceDialog, SceneDialog, FloatChat } from './Dialogs'
 import Device from './Device'
 import Wireless from './Wireless'
-import { Presets, Automation, ChatBox, Quick } from './Pages'
-import Keys from './Keys'
-import AppBar from './AppBar'
-import { KEYMAPS, Mapper, combo } from './keymap'
+import { AutoPanel, ChatBox, Quick } from './Pages'
+import PresetPicker from './PresetPicker'
+import Keys, { KeyHints } from './Keys'
+import { KEYMAPS, MAP_DEFAULTS, Mapper, combo } from './keymap'
 import { PRESETS, patchLayer, newLayer } from './scene'
 import { Button, Segmented, Slider, Switch, Select, Input, Row, Section, Card, Tabs, cx } from './ui'
 
@@ -89,16 +91,12 @@ function Meter({ get }) {
   )
 }
 
+// Mixer channel: one bar — name as the label, live level bouncing inside, drag to set volume.
 function Strip({ icon: Icon, title, right, level, value, onChange }) {
   return (
-    <div className="flex-1 min-w-0 rounded-xl bg-white/[0.04] border border-white/[0.06] px-3 py-2 flex flex-col justify-between gap-1.5">
-      <div className="flex items-center gap-2 h-7">
-        <Icon size={14} className="text-zinc-400 shrink-0" />
-        <span className="text-[12px] font-medium shrink-0">{title}</span>
-        <div className="flex-1 min-w-0 flex justify-end">{right}</div>
-      </div>
-      <Meter get={level} />
-      <div className="flex"><Slider label="Volume" value={value} onChange={onChange} max={1.5} /></div>
+    <div className="flex items-center gap-1">
+      <Slider label={<span className="flex items-center gap-1.5"><Icon size={13} />{title}</span>} level={level} value={value} onChange={onChange} max={1.5} />
+      {right}
     </div>
   )
 }
@@ -119,7 +117,7 @@ export default function App() {
   const [sel, setSel] = useState('')
   const [perm, setPerm] = useState(false)
   const [about, setAbout] = useState(false)
-  const [view, setView] = useState('studio'), [side, setSide] = useState('apps'), [games, setGames] = useState(false), [adding, setAdding] = useState(null)
+  const [view, setView] = useState('studio'), [side, setSide] = useState('scene'), [games, setGames] = useState(false), [adding, setAdding] = useState(null), [srcDlg, setSrcDlg] = useState(null), [sceneDlg, setSceneDlg] = useState(null), [rtab, setRtab] = useState('props'), [picker, setPicker] = useState(false)
   const canvas = useRef(), eng = useRef(), down = useRef(false), drag = useRef(null)
   const s = saved || DEF
   const sRef = useRef()
@@ -266,7 +264,7 @@ export default function App() {
     setChatSt({ busy: true })
     try { setChatSt({ on: true, title: (await api.invoke('chat:start', s.chatUrl)).title }) } catch (e) { setChatSt({ err: clean(e) }) }
   }
-  const applyPreset = name => { const r = PRESETS[name](); set({ scenes: [...s.scenes, r.scene], sceneId: r.scene.id, ...(live || rec ? {} : r.set) }); setSel(''); setView('studio') }
+  const applyPreset = r => { set({ scenes: [...s.scenes, r.scene], sceneId: r.scene.id, ...(live || rec ? {} : r.set) }); setSel(''); setView('studio'); if (r.set?.pkg && ready && cap === 'idle') start({ ...s, ...r.set }) }
   const pickApp = pkg => { // dock / All apps: open the app on the phone and make it the streamed app
     api.invoke('app:action', serial, pkg, 'launch').catch(() => {})
     if (cap === 'on' && s.mode === 'app' && s.appMode === 'guard') set({ pkg }); else source({ mode: 'app', pkg })
@@ -282,10 +280,10 @@ export default function App() {
   const mapper = useRef()
   mapper.current ??= new Mapper(m => api.send('ctl', m), () => { const f = eng.current?.frame; return f && { w: f.displayWidth, h: f.displayHeight } })
   const km = s.keymaps[s.keymapId] || Object.values(s.keymaps)[0]
-  useEffect(() => { mapper.current.reset(); mapper.current.items = km.items }, [km])
+  useEffect(() => { mapper.current.reset(); mapper.current.items = km.items; mapper.current.opts = { ...MAP_DEFAULTS, ...km } }, [km])
   useEffect(() => { // auto-pick the map that belongs to the game in front
     if (s.keymapAuto === false || !focus) return
-    const k = Object.keys(s.keymaps).find(k => s.keymaps[k].pkg === focus)
+    const k = (s.appKeymaps?.[focus] in s.keymaps && s.appKeymaps[focus]) || Object.keys(s.keymaps).find(k => s.keymaps[k].pkg === focus)
     if (k && k !== s.keymapId) set({ keymapId: k })
   }, [focus, s.keymapAuto])
   const game = canCtl && s.keymapOn
@@ -296,7 +294,7 @@ export default function App() {
     onPointerUp: e => locked() && mapper.current.key(['MouseLeft', 'MouseMiddle', 'MouseRight'][e.button], false),
     onPointerMove: e => locked() && mapper.current.look(e.movementX, e.movementY),
     onWheel: e => locked() && mapper.current.pulse(e.deltaY < 0 ? 'WheelUp' : 'WheelDown'),
-    onKeyDown: e => { if (e.code === 'Escape' || e.metaKey) return; e.preventDefault(); if (!e.repeat) mapper.current.key(e.code, true, combo(e)) },
+    onKeyDown: e => { if (e.code === (km.cursorKey || 'Backquote')) { e.preventDefault(); mapper.current.reset(); return locked() ? document.exitPointerLock() : canvas.current.requestPointerLock() } if (e.code === 'Escape' || e.metaKey) return; e.preventDefault(); if (!e.repeat) mapper.current.key(e.code, true, combo(e)) },
     onKeyUp: e => { e.preventDefault(); mapper.current.key(e.code, false) },
     onBlur: () => mapper.current.reset()
   }
@@ -366,7 +364,17 @@ export default function App() {
     const row = col.length === 1 ? '1 / 5' : i === 0 ? (t ? (o ? '1 / 3' : '1 / 4') : '1 / 2') : (t ? (o ? '3 / 5' : '2 / 5') : '4 / 5')
     return { gridColumn: c + 1, gridRow: row }
   }
-  const DOCK = [['studio', 'Studio', SlidersVertical], ['presets', 'Presets', Sparkles], ['auto', 'Automation', Zap], ['keys', 'Keys', Gamepad2], ['device', 'Device', Smartphone]]
+  useEffect(() => { document.documentElement.dataset.accent = s.accent || 'lime' }, [s.accent])
+  const curLayers = (s.scenes.find(x => x.id === s.sceneId) || s.scenes[0])?.layers || []
+  useEffect(() => { if (!curLayers.some(l => l.id === sel)) setSel(curLayers.filter(l => !l.bgOnly).at(-1)?.id || '') }, [s.sceneId, curLayers.length, sel])
+  // Game controls for any app: a key map bound to the app (by package), applied right away
+  const ctlApp = apps?.find(a => a.pkg === (s.mode === 'app' && s.pkg ? s.pkg : focus))
+  const mapFor = pkg => pkg && s.appKeymaps?.[pkg] in s.keymaps ? s.appKeymaps[pkg] : Object.keys(s.keymaps).find(k => s.keymaps[k].pkg === pkg) || ''
+  const bindMap = (pkg, k) => {
+    if (!pkg && !k) return
+    setS(o => ({ ...o, appKeymaps: pkg ? { ...o.appKeymaps, [pkg]: k || undefined } : o.appKeymaps, ...(k ? { keymapId: k, keymapOn: true, control: true } : pkg && mapFor(pkg) ? { keymapOn: false } : {}) }))
+  }
+  const DOCK = [['studio', 'Studio', SlidersVertical], ['keys', 'Keys', Gamepad2], ['device', 'Device', Smartphone]]
   const addLayer = n => setS(o => { // from the Add source window; "bg" adds a hidden source used only as the blurred backdrop
     const bg = adding === 'bg', l = bg ? { ...n, bgOnly: true } : n
     return { ...o, scenes: o.scenes.map(sc => sc.id !== o.sceneId ? sc : { ...sc, layers: bg ? [l, ...sc.layers] : [...sc.layers, l], ...(bg ? { bgBlur: true, bgSrc: l.id } : {}) }) }
@@ -409,18 +417,15 @@ export default function App() {
         </nav>
 
         {view !== 'studio' && <Card key={view} className="pop flex-1 min-w-0 flex">
-          {view === 'presets' && <Presets apply={applyPreset} busy={busy} />}
-          {view === 'auto' && <Automation s={s} set={set} chatBox={<ChatBox tall s={s} set={set} chat={chat} st={chatSt} go={chatGo} />} stopSound={() => eng.current.stopSound()}
-            test={r => act(r, { author: 'Test viewer', amount: '₹100', text: 'Great stream!' })}
-            appRules={<Panel mode="auto" s={s} set={set} focus={focus} apps={apps} media={media} sel="" setSel={() => {}} />} />}
           {view === 'keys' && <Keys s={s} set={set} eng={eng} focus={focus} apps={apps} />}
           {view === 'device' && <Device devices={devices} serial={serial} setSerial={setSerial} ready={ready} focus={focus} apps={apps} meta={meta} onNote={setNote} />}
         </Card>}
-        <div className={cx('flex-1 min-w-0 grid gap-2', view !== 'studio' && 'hidden')} style={{ gridTemplateColumns: lay.map(c => c.includes('preview') ? 'minmax(0,1fr)' : c.includes('scene') ? '322px' : '264px').join(' '), gridTemplateRows: 'auto minmax(0,1fr) minmax(0,1fr) auto' }}>
+        <div className={cx('flex-1 min-w-0 grid gap-1.5', view !== 'studio' && 'hidden')} style={{ gridTemplateColumns: lay.map(c => c.includes('preview') ? 'minmax(0,1fr)' : c.includes('scene') ? '322px' : '264px').join(' '), gridTemplateRows: 'auto minmax(0,1fr) minmax(0,1fr) auto' }}>
         {/* left card: app library + phone */}
         <Slot key="apps" id="apps" pos={place('apps')} swap={swap}><Card className="flex-1 min-h-0 flex flex-col">
-          <div className="p-2.5 pb-1.5"><Segmented value={side} onChange={setSide} options={[['apps', 'Apps', AppWindow], ['phone', 'Phone', Smartphone]]} /></div>
-          {side === 'apps' ? <>
+          <div className="p-2.5 pb-1.5"><Segmented value={side} onChange={setSide} options={[['scene', 'Scene', Layers], ['apps', 'Apps', AppWindow], ['phone', 'Phone', Smartphone]]} /></div>
+          {side === 'scene' ? <div className="flex-1 min-h-0 -mt-1.5"><Panel part={side} s={s} set={set} live={live} busy={busy} media={media} sel={sel} setSel={setSel} focus={focus} apps={apps} goPresets={() => setPicker(true)} addSource={k => setAdding(k || 'src')} editScene={setSceneDlg} editSource={l => setSrcDlg({ layer: l })} /></div>
+          : side === 'apps' ? <>
             <div className="px-2.5 pb-2 flex gap-1.5">
               <div className="relative flex-1">
                 <Search size={13} className="absolute left-2.5 top-[9px] text-zinc-500" />
@@ -469,11 +474,6 @@ export default function App() {
               <Segmented value={s.mode} onChange={mode => source({ mode })} options={[['phone', 'Whole phone', Smartphone], ['app', 'One app', AppWindow]]} />
               {s.mode === 'app' && <>
                 <Segmented value={s.appMode} onChange={appMode => source({ appMode })} options={[['guard', 'On phone', Smartphone], ['virtual', 'Isolated', Layers]]} />
-                <p className="text-[11px] leading-relaxed text-zinc-500">
-                  {s.appMode === 'virtual'
-                    ? 'Moves the app to a private virtual display: it leaves the phone screen and you control it from this preview.'
-                    : 'Play on the phone as usual. Viewers see only the selected app — anything else is covered.'}
-                </p>
                 <button onClick={() => setSide('apps')} className="w-full flex items-center gap-2 rounded-xl bg-white/[0.05] border border-white/[0.06] px-2 h-10 text-left hover:bg-white/[0.09]">
                   {picked ? <AppIcon app={picked} meta={meta} size={24} /> : <AppWindow size={15} className="text-zinc-500 mx-1" />}
                   <span className="flex-1 truncate text-[12px]">{picked?.name || 'Pick an app…'}</span><span className="text-[11px] text-zinc-500">Change</span>
@@ -511,29 +511,13 @@ export default function App() {
                 <span className={cx('h-8 px-3 rounded-xl border flex items-center gap-2 text-[11px] font-semibold tabular-nums backdrop-blur-md', live === 'on' ? 'bg-red-500 border-red-400 text-white' : 'bg-black/60 border-white/10 text-zinc-400')}>
                   {live === 'on' ? <><span className="size-1.5 rounded-full bg-white live-dot" />LIVE {stats?.time.slice(0, 8)}</> : live ? 'CONNECTING…' : 'OFFLINE'}</span>
               </div>
-              {game && <div className="absolute bottom-3 left-1/2 -translate-x-1/2 h-7 px-3 rounded-full bg-white text-black text-[12px] font-semibold flex items-center gap-1.5 pointer-events-none whitespace-nowrap"><Gamepad2 size={13} />{km.name} controls on · click the preview · Esc to release</div>}
+              {game && <div className="absolute bottom-3 left-1/2 -translate-x-1/2 h-7 px-3 rounded-full bg-white text-black text-[12px] font-semibold flex items-center gap-1.5 pointer-events-none whitespace-nowrap"><Gamepad2 size={13} />{km.name} controls on · click the preview · ` frees the cursor</div>}
+              {game && km.hints !== false && <KeyHints eng={eng} canvas={canvas} map={km} />}
               {!s.control && sel && <SelBox eng={eng} canvas={canvas} id={sel} />}
-              {cap !== 'on' && !sel && (
-                <div className="absolute inset-0 grid place-items-center pointer-events-none">
-                  <div className="text-center max-w-[340px] pointer-events-auto">
-                    <div className="mx-auto size-14 rounded-2xl bg-white/[0.06] border border-white/10 grid place-items-center mb-3">
-                      {cap === 'starting' ? <RefreshCw size={22} className="animate-spin text-zinc-200" /> : <Logo size={40} />}
-                    </div>
-                    <div className="text-[15px] font-semibold text-white">
-                      {cap === 'starting' ? `Connecting to ${dev?.model}…` : !dev ? 'Connect your Android phone' : ready ? dev.model : 'Check your phone'}
-                    </div>
-                    <p className="mt-1 text-[12px] text-zinc-400 leading-relaxed">
-                      {cap === 'starting' ? 'Keep the phone unlocked.'
-                        : !dev ? 'Plug it in over USB and enable USB debugging in Settings → Developer options. Meroro picks it up on its own.'
-                        : ready ? (s.mode === 'app' ? (picked ? `Ready to stream ${picked.name} only.` : 'Pick the app you want to stream on the left.') : 'Ready to stream the whole screen.')
-                        : 'Tap “Allow” on the USB debugging prompt.'}
-                    </p>
-                    {cap === 'idle' && ready && <Button variant="primary" className="mt-3 h-8 px-4" onClick={() => start()}>Start capture</Button>}
-                  </div>
-                </div>
-              )}
+              {cap === 'starting' && <div className="absolute bottom-3 left-1/2 -translate-x-1/2 h-7 px-3 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-[12px] text-zinc-300 flex items-center gap-1.5 pointer-events-none whitespace-nowrap"><RefreshCw size={12} className="animate-spin" />Connecting to {dev?.model}…</div>}
               {covered && <div className="absolute top-12 left-1/2 -translate-x-1/2 h-7 px-3 rounded-full bg-amber-500 text-black text-[12px] font-semibold flex items-center gap-1.5 whitespace-nowrap"><ShieldCheck size={13} />Stream covered — {picked?.name || 'the app'} is not in front</div>}
             </div>
+            <Perf serial={serial} ready={ready} eng={eng} />
             <div className="h-10 shrink-0 flex items-center gap-1 px-3 rounded-2xl border border-white/[0.06] bg-[#1b1b1d]">
               <Button variant="ghost" className="px-2" disabled={!canCtl} onClick={() => key(4)} title="Back"><ChevronLeft size={15} /></Button>
               <Button variant="ghost" className="px-2" disabled={!canCtl} onClick={() => key(3)} title="Home"><Circle size={12} /></Button>
@@ -543,23 +527,31 @@ export default function App() {
               <span className="text-[12px] text-zinc-400 mr-1">{s.control ? 'Control phone' : 'Arrange sources'}</span>
               <Switch checked={s.control} onChange={control => set({ control })} />
               <div className="flex-1" />
+              <div className="flex items-center gap-0.5 rounded-lg bg-white/[0.04] pl-0.5">
+                <Button variant="ghost" title={s.keymapOn ? 'Turn game controls off' : 'Turn game controls on'} className={cx('px-2', s.keymapOn && 'text-white bg-white/10')} onClick={() => s.keymapOn ? set({ keymapOn: false }) : bindMap(ctlApp?.pkg, km === s.keymaps[s.keymapId] ? s.keymapId : Object.keys(s.keymaps)[0])}><Gamepad2 size={14} />{s.keymapOn ? 'On' : 'Keys'}</Button>
+                <Select className="w-[124px]" value={s.keymapId} onChange={k => bindMap(ctlApp?.pkg, k)} options={Object.entries(s.keymaps).map(([k, m]) => [k, m.name])} />
+                <Button variant="ghost" className="px-1.5" title="Edit key map" onClick={() => setView('keys')}><SlidersVertical size={13} /></Button>
+              </div>
+              <Button variant="ghost" title="YouTube chat window" className={cx('px-2', s.chatFloat && 'text-white bg-white/10')} onClick={() => set({ chatFloat: !s.chatFloat })}><MessageSquare size={14} />Chat</Button>
               <Quick compact q={qa} />
             </div>
           </div></Slot>
 
-          <Slot key="mixer" id="mixer" pos={place('mixer')} swap={swap}><Card className="flex-1 min-h-[132px] flex gap-2 p-2">
+          <Slot key="mixer" id="mixer" pos={place('mixer')} swap={swap}><Card className="flex-1 flex flex-col justify-center gap-1 p-1.5">
             <Strip icon={Volume2} title="Phone audio" level={() => eng.current?.level('phone') || 0} value={s.phoneVol} onChange={phoneVol => set({ phoneVol })}
-              right={<Button variant="ghost" className={cx(s.monitor && 'text-white bg-white/10')} onClick={() => set({ monitor: !s.monitor })}><Headphones size={13} />Monitor</Button>} />
+              right={<Button variant="ghost" title="Monitor (hear phone audio)" className={cx('h-8 w-[150px]', s.monitor && 'text-white bg-white/10')} onClick={() => set({ monitor: !s.monitor })}><Headphones size={13} />Monitor</Button>} />
             <Strip icon={Mic} title="Microphone" level={() => eng.current?.level('mic') || 0} value={s.micVol} onChange={micVol => set({ micVol })}
-              right={<Select className="w-[150px]" value={s.mic} onChange={mic => set({ mic })} options={[['', 'Off'], ['default', 'System default'], ...media.mics]} />} />
+              right={<Select className="w-[150px] shrink-0" value={s.mic} onChange={mic => set({ mic })} options={[['', 'Off'], ['default', 'System default'], ...media.mics]} />} />
           </Card></Slot>
 
 
         {/* right: scene panel + go live */}
 
-          <Slot key="scene" id="scene" pos={place('scene')} swap={swap}><Card className="flex-1 min-h-0">
-            <Panel s={s} set={set} live={live} busy={busy} media={media} sel={sel} setSel={setSel} focus={focus} apps={apps} goPresets={() => setView('presets')} addSource={k => setAdding(k || 'src')}
-              chatBox={<ChatBox s={s} set={set} chat={chat} st={chatSt} go={chatGo} />} />
+          <Slot key="scene" id="scene" pos={place('scene')} swap={swap}><Card className="flex-1 min-h-0 flex flex-col">
+            <div className="px-1.5 pt-1.5"><Segmented value={rtab} onChange={setRtab} options={[['props', 'Properties', SlidersVertical], ['live', 'Stream', Radio], ['auto', 'Auto', Zap]]} /></div>
+            {rtab === 'auto' ? <div className="flex-1 min-h-0 overflow-y-auto p-1.5"><AutoPanel s={s} set={set} stopSound={() => eng.current.stopSound()} test={r => act(r, { author: 'Test viewer', amount: '₹100', text: 'Great stream!' })}
+              appRules={<Panel mode="auto" s={s} set={set} focus={focus} apps={apps} media={media} sel="" setSel={() => {}} />} /></div>
+            : <Panel part={rtab} editSource={l => setSrcDlg({ layer: l })} s={s} set={set} live={live} busy={busy} media={media} sel={sel} setSel={setSel} focus={focus} apps={apps} />}
           </Card></Slot>
           <Slot key="live" id="live" pos={place('live')} swap={swap}><Card className="flex-1 p-2.5 flex flex-col justify-center gap-2">
             <Button variant={live ? 'default' : 'live'} className="h-11 rounded-2xl text-[13px] font-semibold" onClick={goLive}>
@@ -570,14 +562,29 @@ export default function App() {
 
         </div>
 
-        {adding && <AddSource only={adding === 'bg'} cams={media.cams} onClose={() => setAdding(null)} onPick={n => { addLayer(n); if (adding !== 'bg') { setSel(n.id); set({ control: false }) } }} />}
+        {adding && <AddSource only={adding === 'bg'} cams={media.cams} meta={meta} front={adding !== 'bg' && frontIsApp ? apps?.find(a => a.pkg === focus) : null}
+          onAddApp={a => { // the open app becomes a phone source showing only that app
+            const l = { ...newLayer('phone'), name: a.name, pkg: a.pkg, w: 1, h: 1 }, o2 = { ...s, mode: 'app', appMode: 'guard', pkg: a.pkg }
+            setS(o => ({ ...o, mode: 'app', appMode: 'guard', pkg: a.pkg, scenes: o.scenes.map(sc => sc.id !== o.sceneId ? sc : { ...sc, layers: [...sc.layers, l] }) }))
+            setSel(l.id)
+            if (cap === 'on' && s.mode === 'app' && s.appMode === 'guard') api.send('ctl', { t: 'app', pkg: a.pkg }); else if (ready) start(o2)
+          }} onClose={() => setAdding(null)} onPick={n => adding === 'bg' ? addLayer(n) : setSrcDlg({ layer: n, isNew: true })} />}
+        {srcDlg && <SourceDialog layer={srcDlg.layer} isNew={srcDlg.isNew} cams={media.cams} eng={eng} onClose={() => setSrcDlg(null)} maps={s.keymaps} app={ctlApp} mapFor={mapFor}
+          onSave={d => { if (d.type === 'phone') bindMap(d.pkg || ctlApp?.pkg, d.keymap); delete d.keymap; if (srcDlg.isNew) { addLayer(d); setSel(d.id); set({ control: false }) } else setS(o => ({ ...o, ...patchLayer(o, d.id, d) })) }}
+          onDelete={id => setS(o => ({ ...o, scenes: o.scenes.map(sc => ({ ...sc, layers: sc.layers.filter(x => x.id !== id) })) }))} />}
+        {sceneDlg && (() => { const cur = s.scenes.find(x => x.id === s.sceneId) || s.scenes[0], isNew = sceneDlg === 'new'
+          const sc = isNew ? { id: Math.random().toString(36).slice(2, 9), name: 'Scene ' + (s.scenes.length + 1), bg: '#0b0b0f', bg2: '', bgBlur: false, layers: [] } : s.scenes.find(x => x.id === sceneDlg)
+          return sc && <SceneDialog onPreset={() => setPicker(true)} onSize={canvas => set({ canvas })} count={s.scenes.length} busy={busy} scene={sc} isNew={isNew} current={cur} canvas={s.canvas} canDelete={s.scenes.length > 1} onClose={() => setSceneDlg(null)} pickBg={() => { set({ sceneId: sc.id }); setAdding('bg') }}
+            onSave={d => setS(o => isNew ? { ...o, scenes: [...o.scenes, d], sceneId: d.id } : { ...o, scenes: o.scenes.map(x => x.id === d.id ? d : x) })}
+            onDelete={id => setS(o => { const n = o.scenes.filter(x => x.id !== id); return { ...o, scenes: n, sceneId: o.sceneId === id ? n[0].id : o.sceneId } })} /> })()}
+        {s.chatFloat && <FloatChat pos={s.chatPos} onMove={chatPos => set({ chatPos })} onClose={() => set({ chatFloat: false })}><ChatBox s={s} set={set} chat={chat} st={chatSt} go={chatGo} /></FloatChat>}
+        {picker && <PresetPicker onPick={applyPreset} onClose={() => setPicker(false)} />}
         {about && <About onClose={() => setAbout(false)} />}
         {perm && <Permissions devices={devices} onClose={() => { setPerm(false); eng.current.refreshMedia() }} addScreen={x => {
           const n = { ...newLayer('screen'), src: x.id, name: x.name }
           setS(o => ({ ...o, scenes: o.scenes.map(sc => sc.id !== o.sceneId ? sc : { ...sc, layers: [...sc.layers, n] }) }))
         }} />}
       </div>
-      <div className="relative px-2 pb-2"><AppBar apps={apps} meta={meta} focus={focus} ready={ready} dev={dev} err={appsErr} retry={loadApps} s={s} set={set} pickApp={pickApp} openKeys={() => setView('keys')} /></div>
     </div>
   )
 }
