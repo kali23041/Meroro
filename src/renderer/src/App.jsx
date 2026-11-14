@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  SlidersVertical, GripHorizontal, MessageSquare, Music, Bell, LayoutDashboard, Sparkles, Zap, Gamepad2, Smartphone, Wifi, Usb, Radio, Circle, Square, Mic, Volume2, Headphones, Camera, Layers, ChevronLeft, Search,
+  SlidersVertical, GripHorizontal, MessageSquare, Music, Bell, Wand2, LayoutDashboard, Sparkles, Zap, Gamepad2, Smartphone, Wifi, Usb, Radio, Circle, Square, Mic, Volume2, Headphones, Camera, Layers, ChevronLeft, Search,
   AppWindow, ShieldCheck, ExternalLink, Info, X, Eye, EyeOff, RefreshCw, MousePointerClick, FolderOpen
 } from 'lucide-react'
 import { Engine } from './engine'
@@ -11,6 +11,7 @@ import { useMeta, AppIcon } from './Library'
 import AddSource from './AddSource'
 import Perf from './Perf'
 import Sounds from './Sounds'
+import Overlays from './Overlays'
 import StreamPlus, { titleFor } from './StreamPlus'
 import WhatsNew, { LATEST } from './WhatsNew'
 import { PAD } from './keymap'
@@ -292,7 +293,7 @@ export default function App() {
   // ---- automation: chat / stream triggers → alert, sound, scene ----
   const act = (r, m = {}) => {
     const fill = t => (t || '').replace('{name}', m.author || 'Someone').replace('{amount}', m.amount || '').replace('{text}', m.text || '')
-    if (r.alert) eng.current.showAlert(fill(r.alert), fill(r.sub))
+    if (r.alert) eng.current.showAlert(fill(r.alert), fill(r.sub), undefined, r.afx)
     if (r.sound) eng.current.playSound(r.sound).catch(fail)
     if (r.scene && sRef.current.scenes.some(x => x.id === r.scene)) set({ sceneId: r.scene })
   }
@@ -469,7 +470,11 @@ export default function App() {
     if (!iosSrc) api.invoke('ios:stop').catch(() => {})
     else api.invoke('ios:start', iosSrc).then(() => setNote({ text: iosSrc === 'airplay' ? 'AirPlay ready: on the iPhone open Control Center → Screen Mirroring → Meroro' : 'Connecting to the iPhone over USB…' })).catch(e => { iosRun.current = ''; fail(e) })
   }, [iosSrc, !saved])
-  const [guides, setGuides] = useState([null, null])
+  const [guides, setGuides] = useState([null, null]), [fxEdit, setFxEdit] = useState(null)
+  useEffect(() => { if (view !== 'fx') setFxEdit(null) }, [view])
+  // reminder alerts ("Subscribe!") every N minutes while live
+  const timerAt = useRef({})
+  useEffect(() => { if (!live) return; const t = setInterval(() => { for (const r of sRef.current.autos || []) { if (!r.enabled || r.on !== 'timer') continue; const gap = (+r.arg || 10) * 60000, last = timerAt.current[r.id] ??= Date.now(); if (Date.now() - last >= gap) { timerAt.current[r.id] = Date.now(); act(r) } } }, 15000); return () => clearInterval(t) }, [!!live])
   const layersNow = () => (sRef.current.scenes.find(x => x.id === sRef.current.sceneId) || sRef.current.scenes[0]).layers
   // LUT files used by sources load once
   useEffect(() => { for (const sc of s.scenes) for (const l of sc.layers) if (l.fx?.lut && !window.__luts?.[l.fx.lut]) { (window.__luts ??= {})[l.fx.lut] = 1; api.invoke('file:read', l.fx.lut).then(b => setLut(l.fx.lut, parseCube(new TextDecoder().decode(b)))).catch(() => {}) } }, [s.scenes])
@@ -509,7 +514,7 @@ export default function App() {
   const [upd, setUpd] = useState(null)
   useEffect(() => { if (saved && s.autoUpdate !== false) api.invoke('update:check').then(setUpd).catch(() => {}) }, [!saved])
   const go = r => { setView(r.view || 'studio'); if (r.rtab) setRtab(r.rtab); if (r.add) { const l = newLayer(r.add); if (r.add === 'ios') setAdding('src'); else setSrcDlg({ layer: l, isNew: true }) } }
-  const DOCK = [['studio', 'Studio', SlidersVertical], ['new', 'What’s new', Bell], ['keys', 'Keys', Gamepad2], ['device', 'Device', Smartphone]]
+  const DOCK = [['studio', 'Studio', SlidersVertical], ['new', 'What’s new', Bell], ['fx', 'Overlays', Wand2], ['keys', 'Keys', Gamepad2], ['device', 'Device', Smartphone]]
   const addLayer = n => setS(o => { // from the Add source window; "bg" adds a hidden source used only as the blurred backdrop
     const bg = adding === 'bg', l = bg ? { ...n, bgOnly: true } : n
     return { ...o, scenes: o.scenes.map(sc => sc.id !== o.sceneId ? sc : { ...sc, layers: bg ? [l, ...sc.layers] : [...sc.layers, l], ...(bg ? { bgBlur: true, bgSrc: l.id } : {}) }) }
@@ -555,6 +560,12 @@ export default function App() {
 
         {view !== 'studio' && <Card key={view} className="pop flex-1 min-w-0 flex">
           {view === 'new' && <WhatsNew go={go} s={s} set={set} />}
+          {view === 'fx' && <Overlays canvas={s.canvas} editing={fxEdit}
+            onBanner={l => { setS(o => ({ ...o, scenes: o.scenes.map(sc => sc.id !== o.sceneId ? sc : { ...sc, layers: [...sc.layers, l] }) })); setSel(l.id) }}
+            onScene={sc => { setS(o => ({ ...o, scenes: [...o.scenes, sc], sceneId: sc.id })); setSel(''); setView('studio') }}
+            onAlert={r => setS(o => ({ ...o, autos: [...(o.autos || []), { id: Math.random().toString(36).slice(2, 9), enabled: true, sound: '', scene: '', ...r }],
+              scenes: o.scenes.map(sc => sc.id !== o.sceneId || sc.layers.some(l => l.type === 'alert') ? sc : { ...sc, layers: [...sc.layers, newLayer('alert')] }) }))}
+            onSave={(id, p) => { setS(o => ({ ...o, scenes: o.scenes.map(sc => ({ ...sc, layers: sc.layers.map(l => l.id === id ? { ...l, ...p } : l) })) })); setFxEdit(null); setView('studio') }} />}
           {view === 'keys' && <Keys s={s} set={set} eng={eng} focus={focus} apps={apps} />}
           {view === 'device' && <Device devices={devices} serial={serial} setSerial={setSerial} ready={ready} focus={focus} apps={apps} meta={meta} onNote={setNote} />}
         </Card>}
@@ -694,7 +705,7 @@ export default function App() {
             : rtab === 'sounds' ? <div className="flex-1 min-h-0 overflow-y-auto p-1.5"><Sounds s={s} set={set} eng={eng} /></div>
             : rtab === 'live' ? <div className="flex-1 min-h-0 overflow-y-auto"><Panel part="live" s={s} set={set} live={live} busy={busy} media={media} sel={sel} setSel={setSel} focus={focus} apps={apps} />
               <div className="px-1.5 pb-1.5"><StreamPlus s={s} set={set} hist={hist} live={live} busy={busy} game={apps?.find(x => x.pkg === focus)?.name} /></div></div>
-            : <Panel part={rtab} editSource={l => setSrcDlg({ layer: l })} s={s} set={set} live={live} busy={busy} media={media} sel={sel} setSel={setSel} focus={focus} apps={apps} />}
+            : <Panel part={rtab} editFx={l => { setFxEdit(l); setView('fx') }} editSource={l => setSrcDlg({ layer: l })} s={s} set={set} live={live} busy={busy} media={media} sel={sel} setSel={setSel} focus={focus} apps={apps} />}
           </Card></Slot>
           <Slot key="live" id="live" pos={place('live')} swap={swap}><Card className="flex-1 p-2.5 flex flex-col justify-center gap-2">
             <Button variant={live ? 'default' : 'live'} className="h-11 rounded-2xl text-[13px] font-semibold" onClick={goLive}>

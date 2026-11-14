@@ -4,7 +4,7 @@ export const uid = () => Math.random().toString(36).slice(2, 9)
 
 export const TYPES = [['phone', 'Android phone'], ['ios', 'iPhone / iPad'], ['webcam', 'Webcam'], ['screen', 'Screen / window'], ['image', 'Image'], ['video', 'Video file'],
   ['browser', 'Web page / alerts'], ['chat', 'YouTube chat'], ['alert', 'Alert box (Super Chat)'], ['text', 'Text'], ['clock', 'Clock'], ['color', 'Color / gradient'],
-  ['lower', 'Lower third'], ['goal', 'Goal bar'], ['mask', 'Blur / mask box'], ['scene', 'Scene (nested)']]
+  ['banner', 'Overlay banner'], ['fxbg', 'Animated background'], ['fxtext', 'Animated text'], ['lower', 'Lower third'], ['goal', 'Goal bar'], ['mask', 'Blur / mask box'], ['scene', 'Scene (nested)']]
 
 const G0 = { b: 1, c: 1, s: 1, hue: 0, sepia: 0, blur: 0 }
 export const GRADES = {

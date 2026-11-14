@@ -1,6 +1,7 @@
 // Studio engine: decodes the phone's H.264 with WebCodecs, composites the scene on a canvas,
 // mixes audio with WebAudio, and feeds MediaRecorder chunks to ffmpeg in the main process.
 import { gpuFx } from './gpu'
+import { drawBanner, drawBg, drawText, drawAlertFx } from './fx'
 import { RnnoiseWorkletNode, loadRnnoise } from '@sapphi-red/web-noise-suppressor'
 import rnWorklet from '@sapphi-red/web-noise-suppressor/rnnoiseWorklet.js?url'
 import rnWasm from '@sapphi-red/web-noise-suppressor/rnnoise.wasm?url'
@@ -157,7 +158,7 @@ export class Engine {
 
   // ---- chat, alerts, sounds ----
   pushChat(m) { m.at = performance.now(); this.chat.push(m); if (this.chat.length > 60) this.chat.shift() }
-  showAlert(title, sub = '', ms = 7000) { this.alert = { title, sub, until: performance.now() + ms } }
+  showAlert(title, sub = '', ms = 7000, afx) { this.alert = { title, sub, afx, at: performance.now(), until: performance.now() + ms } }
   async playSound(path) {
     if (!this.sounds[path]) { const u = await api.invoke('file:read', path); this.sounds[path] = await this.ac.decodeAudioData(u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength)) }
     const n = this.ac.createBufferSource()
@@ -187,7 +188,9 @@ export class Engine {
       ctx.shadowColor = 'transparent'; ctx.globalAlpha = 1
     })
   }
-  drawAlert(x, y, w, h) {
+  drawAlert(x, y, w, h, l) {
+    const fxs = this.alert.afx || l?.afx
+    if (fxs) return drawAlertFx(this.ctx, x, y, w, h, fxs, this.alert, (performance.now() - this.alert.at) / 1000)
     const { ctx } = this, a = this.alert, g = ctx.createLinearGradient(x, y, x + w, y + h)
     g.addColorStop(0, '#7c3aed'); g.addColorStop(1, '#ec4899')
     ctx.fillStyle = g; ctx.fillRect(x, y, w, h)
@@ -287,7 +290,7 @@ export class Engine {
       dw = ctx.measureText(txt).width + bh * 0.9
     } else if (l.type === 'scene') {
       src = this.nested(l, W, H)
-    } else if (!['color', 'mask', 'goal', 'lower', 'chat', 'alert'].includes(l.type)) {
+    } else if (!['color', 'mask', 'goal', 'lower', 'chat', 'alert', 'banner', 'fxbg', 'fxtext'].includes(l.type)) {
       src = this.media(l)
       if (src && l.fx) src = gpuFx(l.id, src, l.fx)
       if (src) {
@@ -298,7 +301,7 @@ export class Engine {
       }
     }
     const g = this.geo[l.id] = { cx: l.x * W, cy: l.y * H, w: dw, h: dh, rot: l.rot * Math.PI / 180, sx, sy, sw, sh, flip: l.flip, phone: l.type === 'phone' && !!src }
-    if ((!src && !['text', 'color', 'chat', 'alert', 'mask', 'goal', 'lower'].includes(l.type)) || (l.type === 'lower' && !this.lowerOn(l)) || (l.type === 'alert' && !this.alerting)) return // nothing to draw yet, but still selectable
+    if ((!src && !['text', 'color', 'chat', 'alert', 'mask', 'goal', 'lower', 'banner', 'fxbg', 'fxtext'].includes(l.type)) || (l.type === 'lower' && !this.lowerOn(l)) || (l.type === 'alert' && !this.alerting)) return // nothing to draw yet, but still selectable
     const x = -dw / 2, y = -dh / 2, gr = l.grade, path = () => { ctx.beginPath(); ctx.roundRect(x, y, dw, dh, l.radius * Math.min(dw, dh)) }
     ctx.save()
     ctx.translate(g.cx, g.cy); ctx.rotate(g.rot); ctx.globalAlpha = l.opacity
@@ -319,7 +322,10 @@ export class Engine {
     } else if (l.type === 'chat') this.drawChat(x, y, dw, dh, l)
     else if (l.type === 'goal') this.drawGoal(x, y, dw, dh, l)
     else if (l.type === 'lower') this.drawLower(x, y, dw, dh, l)
-    else if (l.type === 'alert') this.drawAlert(x, y, dw, dh)
+    else if (l.type === 'alert') this.drawAlert(x, y, dw, dh, l)
+    else if (l.type === 'banner') drawBanner(ctx, x, y, dw, dh, l.b, performance.now() / 1000, this.res[l.id]?.el)
+    else if (l.type === 'fxbg') drawBg(ctx, x, y, dw, dh, l.b, performance.now() / 1000)
+    else if (l.type === 'fxtext') drawText(ctx, x, y, dw, dh, l.b, performance.now() / 1000)
     else {
       if (l.bgOn) { ctx.fillStyle = l.bg; ctx.fillRect(x, y, dw, dh) }
       ctx.fillStyle = l.color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(txt, 0, fs * 0.05)
@@ -413,7 +419,7 @@ export class Engine {
     const ids = new Set([this.s.sceneId, ...(this.recs?.live2 ? [this.s.out2?.sceneId] : [])]), all = []
     for (let i = 0; i < 3; i++) for (const sc of this.s.scenes || []) if (ids.has(sc.id)) for (const l of sc.layers) { if (l.type === 'scene') ids.add(l.src); if (i === 2) all.push(l) }
     for (const l of all) {
-      if (!['webcam', 'screen', 'image', 'video', 'browser'].includes(l.type) || keep.has(l.id)) continue
+      if (!(['webcam', 'screen', 'image', 'video', 'browser'].includes(l.type) || (l.type === 'banner' && l.src)) || keep.has(l.id)) continue
       keep.add(l.id)
       const key = l.type + '|' + (l.src || '')
       if (this.res[l.id]?.key === key) continue

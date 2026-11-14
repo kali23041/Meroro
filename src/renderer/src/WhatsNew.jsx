@@ -7,6 +7,12 @@ import { VERSION } from './Brand'
 const api = window.api
 const L = (title, desc, go, tag) => ({ title, desc, go, tag })
 export const RELEASES = [
+  { v: '1.4.0', items: [
+    L('Name banners', '56 animated bottom banners: neon bar, slant, glass, cyber, esports and more. Edit name, handles, font, colours, glow and animation, add your own picture, then copy to the scene.', { view: 'fx' }, 'Overlays'),
+    L('Stream scenes', '60 animated Starting soon, Ending and Be right back scenes with moving backgrounds and text effects. One click imports the scene.', { view: 'fx' }, 'Overlays'),
+    L('Alert effects', '20 animated alerts (confetti, coin rain, neon, glitch…) for Super Chats, members, chat and subscribe reminders. Import adds the rule and the alert.', { view: 'fx' }, 'Overlays'),
+    L('Reminder trigger', 'Automation rule that fires every N minutes while live, e.g. a Subscribe reminder.', { rtab: 'auto' }, 'Chat')
+  ] },
   { v: '1.3.0', items: [
     L('Auto-reconnect', 'If the internet drops, Meroro keeps retrying and resumes the stream by itself, with a “Reconnecting…” badge.', { rtab: 'live' }, 'Stream'),
     L('Auto bitrate', 'Lowers quality when your upload slows down and raises it again when it recovers.', { rtab: 'live' }, 'Stream'),

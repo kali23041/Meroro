@@ -1,7 +1,7 @@
 {
   "name": "meroro",
   "productName": "Meroro",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Meroro — phone streaming studio by Kartik Sabale. Mirror an Android phone or a single app and go live on YouTube.",
   "author": "Kartik Sabale",
   "main": "out/main/index.js",

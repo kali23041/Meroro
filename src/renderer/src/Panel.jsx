@@ -11,7 +11,7 @@ const Color = ({ value, onChange }) => <input type="color" value={value || '#000
 const S = ({ label, v, on, min = 0, max = 1, step = 0.01 }) => <Row label={label}><Slider value={v} onChange={on} min={min} max={max} step={step} /></Row>
 const icon = 'p-1 rounded text-zinc-500 hover:text-zinc-100 hover:bg-white/10 disabled:opacity-30'
 
-export default function Panel({ s, set, live, busy, media, sel, setSel, focus, apps, mode, part, goPresets, addSource, editScene, editSource }) {
+export default function Panel({ s, set, live, busy, media, sel, setSel, focus, apps, mode, part, goPresets, addSource, editScene, editSource, editFx }) {
   const [pt, setPt] = useState('move')
   const [showKey, setShowKey] = useState(false), [screens, setScreens] = useState([])
   const scene = s.scenes.find(x => x.id === s.sceneId) || s.scenes[0]
@@ -71,6 +71,7 @@ export default function Panel({ s, set, live, busy, media, sel, setSel, focus, a
         {part?.split(' ').includes('props') && l && <>
           <Section icon={SlidersHorizontal} title={l.name} right={<button className={icon} title="Source settings" onClick={() => editSource(l)}><Settings2 size={13} /></button>}>
             <Segmented value={pt} onChange={setPt} options={[['move', 'Move'], ['style', 'Style'], ['color', 'Color']]} />
+            {['banner', 'fxbg', 'fxtext'].includes(l.type) && <Button variant="primary" className="w-full h-8" onClick={() => editFx(l)}><Sparkles size={12} />Edit overlay</Button>}
             {l.type === 'lower' && <Button variant="primary" className="w-full h-8" onClick={() => window.__eng?.playLower(l.id)}>▶ Play lower third</Button>}
             {l.type === 'goal' && <div className="flex gap-1"><Button className="flex-1 h-8" onClick={() => up({ cur: Math.max(0, (l.cur || 0) - (l.auto === 'superchat' ? 100 : 1)) })}>−</Button><Button className="flex-1 h-8" onClick={() => up({ cur: (l.cur || 0) + (l.auto === 'superchat' ? 100 : 1) })}>+</Button><Button className="flex-1 h-8" onClick={() => up({ cur: 0 })}>Reset</Button></div>}
             {pt === 'move' && <>

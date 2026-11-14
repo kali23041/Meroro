@@ -144,7 +144,7 @@ export function ChatBox({ s, set, chat, st, go, tall }) {
 }
 
 // ---------- Automation ----------
-const TRIG = [['superchat', 'Super Chat / Super Sticker'], ['member', 'New member'], ['chat', 'Any chat message'], ['command', 'Chat command (starts with)'], ['keyword', 'Chat contains word'], ['live', 'Stream started'], ['end', 'Stream ended']]
+const TRIG = [['superchat', 'Super Chat / Super Sticker'], ['member', 'New member'], ['chat', 'Any chat message'], ['command', 'Chat command (starts with)'], ['keyword', 'Chat contains word'], ['live', 'Stream started'], ['timer', 'Every N minutes (reminder)'], ['end', 'Stream ended']]
 const IDEAS = [
   ['Super Chat → music + alert', { on: 'superchat', alert: '{name} sent {amount}!', sub: '{text}' }],
   ['New member → alert', { on: 'member', alert: 'Welcome {name}!', sub: 'New member' }],
@@ -177,7 +177,7 @@ export function Automation({ s, set, test, appRules, chatBox, stopSound }) {
                 <Switch checked={r.enabled} onChange={enabled => up(r.id, { enabled })} />
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 w-10">When</span>
                 <Select className="w-[230px]" value={r.on} onChange={on => up(r.id, { on })} options={TRIG} />
-                {(r.on === 'command' || r.on === 'keyword') && <Input className="w-[150px]" value={r.arg} onChange={e => up(r.id, { arg: e.target.value })} placeholder={r.on === 'command' ? '!hello' : 'word'} />}
+                {(r.on === 'command' || r.on === 'keyword' || r.on === 'timer') && <Input className="w-[150px]" value={r.arg} onChange={e => up(r.id, { arg: e.target.value })} placeholder={r.on === 'command' ? '!hello' : r.on === 'timer' ? 'minutes' : 'word'} />}
                 <div className="flex-1" />
                 <Button onClick={() => test(r)}><FlaskConical size={12} />Test</Button>
                 <Button variant="ghost" className="px-1.5" onClick={() => set({ autos: rules.filter(x => x.id !== r.id) })}><Trash2 size={13} /></Button>
@@ -241,7 +241,7 @@ export function AutoPanel({ s, set, test, appRules, stopSound }) {
               <Button variant="ghost" className="px-1.5" title="Test" onClick={() => test(r)}><FlaskConical size={12} /></Button>
               <Button variant="ghost" className="px-1.5" title="Delete" onClick={() => set({ autos: rules.filter(x => x.id !== r.id) })}><Trash2 size={12} /></Button>
             </div>
-            {(r.on === 'command' || r.on === 'keyword') && <Input value={r.arg} onChange={e => up(r.id, { arg: e.target.value })} placeholder={r.on === 'command' ? '!hello' : 'word'} />}
+            {(r.on === 'command' || r.on === 'keyword' || r.on === 'timer') && <Input value={r.arg} onChange={e => up(r.id, { arg: e.target.value })} placeholder={r.on === 'command' ? '!hello' : r.on === 'timer' ? 'minutes' : 'word'} />}
             <Input value={r.alert} onChange={e => up(r.id, { alert: e.target.value })} placeholder="Alert title, e.g. {name} sent {amount}!" />
             <Input value={r.sub} onChange={e => up(r.id, { sub: e.target.value })} placeholder="Second line, e.g. {text}" />
             <div className="flex gap-1.5">
