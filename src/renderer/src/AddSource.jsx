@@ -1,21 +1,22 @@
 // "Add source" window: pick a kind of source, then (for screens, windows, cameras) pick exactly which one.
 import { useEffect, useState } from 'react'
-import { PanelBottom, Target, EyeOff, Layers, TabletSmartphone, Usb, Cast, Download, Loader2, Smartphone, Webcam, Monitor, AppWindow, Image as ImageIcon, Film, Globe, MessageSquare, BellRing, Type, Clock, Palette, X, ChevronLeft, RefreshCw } from 'lucide-react'
+import { Mic, Volume2, Play, Captions, PanelBottom, Target, EyeOff, Layers, TabletSmartphone, Usb, Cast, Download, Loader2, Smartphone, Webcam, Monitor, AppWindow, Image as ImageIcon, Film, Globe, MessageSquare, BellRing, Type, Clock, Palette, X, ChevronLeft, RefreshCw } from 'lucide-react'
 import { Button, Input, Tabs, cx } from './ui'
 import { newLayer } from './scene'
 import { AppIcon } from './Library'
+import { SFX } from './sfx'
 
 const api = window.api
 const KINDS = [
   ['phone', 'Android', 'Android phone · USB or Wi-Fi', Smartphone], ['ios', 'iPhone / iPad', 'USB (Mac) or AirPlay', TabletSmartphone], ['screen', 'Screen', 'A whole display', Monitor], ['window', 'Window', 'One app window', AppWindow],
-  ['webcam', 'Webcam', 'Camera / facecam', Webcam], ['image', 'Image', 'PNG, JPG, GIF', ImageIcon], ['video', 'Video file', 'MP4, MOV, WebM', Film],
+  ['mic', 'Microphone', 'Voice input · voice changer', Mic], ['webcam', 'Webcam', 'Camera / facecam', Webcam], ['sound', 'Sound effect', 'Whoosh, coin, ding…', Volume2], ['image', 'Image', 'PNG, JPG, GIF', ImageIcon], ['video', 'Video file', 'MP4, MOV, WebM', Film],
   ['browser', 'Web page', 'Alerts, widgets', Globe], ['chat', 'YouTube chat', 'Live chat box', MessageSquare], ['alert', 'Alert box', 'Super Chat pop-up', BellRing],
   ['text', 'Text', 'Title or label', Type], ['clock', 'Clock', 'Live time', Clock], ['color', 'Color', 'Solid or gradient', Palette],
-  ['lower', 'Lower third', 'Name that slides in', PanelBottom], ['goal', 'Goal bar', 'Super Chat / member goal', Target], ['mask', 'Blur box', 'Hide an area on stream', EyeOff], ['scene', 'Scene', 'Reuse another scene', Layers]
+  ['lower', 'Lower third', 'Name that slides in', PanelBottom], ['goal', 'Goal bar', 'Super Chat / member goal', Target], ['caption', 'Live captions', 'Your voice as text', Captions], ['mask', 'Blur box', 'Hide an area on stream', EyeOff], ['scene', 'Scene', 'Reuse another scene', Layers]
 ]
 
-export default function AddSource({ only, cams, onPick, onClose, front, meta, onAddApp }) {
-  const [kind, setKind] = useState(only ? 'screen' : ''), [shots, setShots] = useState(null), [tab, setTab] = useState('screen'), [url, setUrl] = useState('')
+export default function AddSource({ only, cams, onPick, onClose, front, meta, onAddApp, mics = [], onMic, kind0 }) {
+  const [kind, setKind] = useState(only ? 'screen' : kind0 || ''), [shots, setShots] = useState(null), [tab, setTab] = useState('screen'), [url, setUrl] = useState('')
   const [ios, setIos] = useState(null), [inst, setInst] = useState('')
   useEffect(() => { if (kind !== 'ios') return; const f = () => api.invoke('ios:list').then(setIos).catch(() => {}); f(); const t = setInterval(f, 2000); return () => clearInterval(t) }, [kind])
   const install = async () => { setInst('busy'); try { await api.invoke('airplay:install'); setInst('') } catch (e) { setInst(String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')) } }
@@ -23,12 +24,12 @@ export default function AddSource({ only, cams, onPick, onClose, front, meta, on
   useEffect(() => { if (kind === 'screen' || kind === 'window') { setTab(kind); load() } }, [kind])
   const add = (type, o) => { onPick({ ...newLayer(type), ...o }); onClose() }
   const choose = async k => {
-    if (k === 'screen' || k === 'window' || k === 'ios') return setKind(k)
+    if (k === 'screen' || k === 'window' || k === 'ios' || k === 'mic' || k === 'sound') return setKind(k)
     if (k === 'image' || k === 'video') { const src = await api.invoke('file:pick', k); return src && add(k, { src, name: src.split(/[\\/]/).pop() }) }
     add(k)
   }
   const list = (shots || []).filter(x => x.id.startsWith(tab))
-  const title = !kind ? 'Add source' : only ? 'Choose a screen or window for the backdrop' : kind === 'ios' ? 'Add an iPhone or iPad' : kind === 'webcam' ? 'Choose a camera' : kind === 'browser' ? 'Web page' : 'Choose what to capture'
+  const title = kind === 'mic' ? 'Add a microphone' : kind === 'sound' ? 'Add a sound effect' : !kind ? 'Add source' : only ? 'Choose a screen or window for the backdrop' : kind === 'ios' ? 'Add an iPhone or iPad' : kind === 'webcam' ? 'Choose a camera' : kind === 'browser' ? 'Web page' : 'Choose what to capture'
 
   return (
     <div className="absolute inset-0 z-50 grid place-items-center bg-black/50 backdrop-blur-md" onPointerDown={e => e.target === e.currentTarget && onClose()}>
@@ -89,6 +90,20 @@ export default function AddSource({ only, cams, onPick, onClose, front, meta, on
                   : <Button className="h-9 px-3" disabled={inst === 'busy' || !ios} onClick={install}>{inst === 'busy' ? <><Loader2 size={13} className="animate-spin" />Installing…</> : <><Download size={13} />Install</>}</Button>}
               </div>
             </div>
+          </div>}
+          {kind === 'mic' && <div className="space-y-1.5">
+            {[['default', 'System default microphone'], ...mics].map(([id, name]) => (
+              <button key={id} onClick={() => { onMic(id, name); onClose() }} className="w-full flex items-center gap-3 rounded-xl bg-white/[0.04] border border-white/[0.07] px-3 h-11 text-left hover:bg-white/[0.1]">
+                <Mic size={15} className="text-zinc-400" /><span className="truncate">{name}</span>
+              </button>))}
+            <p className="pt-1 text-[11px] text-zinc-500">Add as many microphones as you like; each gets its own fader, voice changer and settings in the mixer.</p>
+          </div>}
+          {kind === 'sound' && <div className="grid grid-cols-4 gap-2">
+            {SFX.map(([id, name]) => (
+              <div key={id} className="flex items-center gap-1 rounded-xl bg-white/[0.04] border border-white/[0.07] p-1.5">
+                <button title="Listen" onClick={() => window.__eng?.playSfx(id)} className="size-8 shrink-0 grid place-items-center rounded-lg bg-white/[0.08] hover:bg-white/[0.16]"><Play size={13} /></button>
+                <button onClick={() => { window.__eng?.playSfx(id); add('sound', { sfx: id, name: name + ' sound' }) }} className="flex-1 min-w-0 h-8 truncate rounded-lg px-1.5 text-left text-[12px] text-zinc-100 hover:bg-white/[0.08]">{name}</button>
+              </div>))}
           </div>}
           {kind === 'webcam' && <div className="space-y-1.5">
             {[['default', 'System default camera'], ...cams].map(([id, name]) => (

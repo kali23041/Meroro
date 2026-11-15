@@ -4,7 +4,7 @@ import {
   Radio, Circle, Camera, Mic, MicOff, Volume2, VolumeX, EyeOff, Eye, Play, Square, Smartphone, Zap, MessageSquare, AppWindow, Plus, Trash2,
   Music, FlaskConical, Gamepad2, LayoutGrid, RectangleVertical, Clapperboard, Check
 } from 'lucide-react'
-import { Button, Segmented, Select, Input, Switch, cx } from './ui'
+import { Button, Segmented, Select, Input, Switch, Slider, Row, cx } from './ui'
 import { PRESETS, uid } from './scene'
 import Library from './Library'
 
@@ -214,8 +214,8 @@ export function AutoPanel({ s, set, test, appRules, stopSound }) {
   const add = o => set({ autos: [...rules, { id: uid(), enabled: true, on: 'superchat', arg: '', alert: '', sub: '', sound: '', scene: '', ...o }] })
   return (
     <div className="space-y-1.5">
-      <Segmented value={tab} onChange={setTab} options={[['rules', 'Triggers', Zap], ['cmds', 'Commands', MessageSquare], ['apps', 'Apps', AppWindow]]} />
-      {tab === 'cmds' ? <>
+      <Segmented value={tab} onChange={setTab} options={[['rules', 'Triggers', Zap], ['cmds', 'Commands', MessageSquare], ['talk', 'Talking', Mic], ['apps', 'Apps', AppWindow]]} />
+      {tab === 'talk' ? <TalkSwitch s={s} set={set} /> : tab === 'cmds' ? <>
         <div className="flex items-center gap-2 rounded-xl bg-[#242427] p-2.5 text-[12px]">
           <span className={cx('size-2 rounded-full', yt ? 'bg-emerald-400' : 'bg-zinc-600')} /><span className="flex-1 text-zinc-300">{yt ? 'Signed in to YouTube' : 'Sign in so Meroro can reply in chat'}</span>
           {yt ? <Button className="h-7" onClick={async () => { await api.invoke('yt:logout'); setYt(false) }}>Sign out</Button> : <Button variant="primary" className="h-7" onClick={async () => { await api.invoke('yt:login'); setYt(await api.invoke('yt:status')) }}>Sign in</Button>}
@@ -253,4 +253,18 @@ export function AutoPanel({ s, set, test, appRules, stopSound }) {
       </>}
     </div>
   )
+}
+
+// Scene changes with your voice: talking → e.g. a big facecam scene, quiet for a few seconds → back to gameplay.
+function TalkSwitch({ s, set }) {
+  const t = { on: false, talk: '', quiet: '', after: 3, ...s.talkSw }, up = p => set({ talkSw: { ...t, ...p } })
+  const opts = [['', 'Choose scene…'], ...s.scenes.map(x => [x.id, x.name])]
+  return <div className="rounded-xl bg-[#242427] p-2.5 space-y-1.5">
+    <Row label="Switch on talking"><span className="flex-1 text-[11px] text-zinc-500">Uses your mic level</span><Switch checked={t.on} onChange={on => up({ on })} /></Row>
+    <Row label="While talking"><Select className="flex-1" value={t.talk} onChange={talk => up({ talk })} options={opts} /></Row>
+    <Row label="When quiet"><Select className="flex-1" value={t.quiet} onChange={quiet => up({ quiet })} options={opts} /></Row>
+    <Row label="Back after"><Select className="flex-1" value={String(t.after)} onChange={v => up({ after: +v })} options={[['1', '1 s'], ['2', '2 s'], ['3', '3 s'], ['5', '5 s'], ['10', '10 s']]} /></Row>
+    <Row label="Mic sensitivity"><Slider value={1 - (s.talkLevel ?? 0.3)} onChange={v => set({ talkLevel: 1 - v })} min={0.3} max={0.95} /></Row>
+    <p className="text-[11px] leading-relaxed text-zinc-500">The same voice detection drives “Zoom when talking” on webcams (Properties → Face).</p>
+  </div>
 }

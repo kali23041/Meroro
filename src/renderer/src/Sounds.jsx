@@ -1,14 +1,31 @@
 // Sounds tab: mic clean-up (noise suppression, push-to-talk), background music with ducking, and a soundboard.
 import { useEffect, useState } from 'react'
-import { Mic, Music, Play, Pause, SkipForward, SkipBack, Plus, Trash2, Square, Grid3x3, Shuffle } from 'lucide-react'
-import { Button, Row, Section, Segmented, Slider, Switch, Input, cx } from './ui'
+import { Captions as CapIcon, Mic, Music, Play, Pause, SkipForward, SkipBack, Plus, Trash2, Square, Grid3x3, Shuffle } from 'lucide-react'
+import { Button, Row, Section, Segmented, Slider, Switch, Input, Select, cx } from './ui'
 import { KeyCap } from './Keys'
-import { uid } from './scene'
+import { uid, newLayer } from './scene'
+import { CAP_LANGS } from './captions'
 
 const api = window.api
 const base = p => p.split(/[\\/]/).pop().replace(/\.\w+$/, '')
 
-export default function Sounds({ s, set, eng }) {
+// Live captions: speech-to-text on this computer (no account, no internet after the first download).
+function CaptionsBox({ s, set, eng, addLayer, openStyles }) {
+  const [st, setSt] = useState('off'), [pct, setPct] = useState(0)
+  useEffect(() => window.api.on('captions:progress', setPct), [])
+  useEffect(() => { const t = setInterval(() => setSt(eng.current?.cap?.state || 'off'), 400); return () => clearInterval(t) }, [])
+  const has = s.scenes.find(x => x.id === s.sceneId)?.layers.some(l => l.type === 'caption')
+  const msg = !s.capOn ? 'Turns your voice into text on the stream' : st === 'loading' ? `Getting the speech model ready (about 40 MB, one time)…${pct && pct < 100 ? ' ' + pct + '%' : ''}` : st === 'error' ? 'Could not load the speech model. Check your internet and try again.'
+    : !s.mic ? 'Choose a microphone in the mixer first' : 'Listening'
+  return <Section icon={CapIcon} title="Live captions" right={<Switch checked={!!s.capOn} onChange={capOn => set({ capOn })} />}>
+    <div className={cx('text-[11px]', st === 'error' && s.capOn ? 'text-red-400' : s.capOn && st === 'on' && s.mic ? 'text-emerald-400' : 'text-zinc-500')}>{msg}</div>
+    <Row label="Language"><Select className="flex-1" value={s.capLang || 'en-in'} onChange={capLang => set({ capLang })} options={CAP_LANGS.map(l => [l[0], l[1]])} /></Row>
+    {!has && <Button className="w-full h-8" onClick={() => { set({ capOn: true }); addLayer(newLayer('caption')) }}><Plus size={12} />Add caption box to this scene</Button>}
+    <Button className="w-full h-8" onClick={openStyles}>Browse caption styles</Button>
+  </Section>
+}
+
+export default function Sounds({ s, set, eng, addLayer, openStyles }) {
   const list = s.playlist || [], pads = s.pads || [], ptt = { mode: 'off', key: 'KeyV', ...s.ptt }
   const [cur, setCur] = useState(-1), [playing, setPlaying] = useState(false), [edit, setEdit] = useState(false)
   const play = async i => { if (!list.length) return; const n = (i + list.length) % list.length; setCur(n); setPlaying(true); try { await eng.current.playMusic(list[n]) } catch { setPlaying(false) } }
@@ -17,6 +34,7 @@ export default function Sounds({ s, set, eng }) {
   const upPad = (id, p) => set({ pads: pads.map(x => x.id === id ? { ...x, ...p } : x) })
 
   return <>
+    <CaptionsBox s={s} set={set} eng={eng} addLayer={addLayer} openStyles={openStyles} />
     <Section icon={Mic} title="Microphone">
       <Row label="Noise removal"><Switch checked={!!s.noise} onChange={noise => set({ noise })} /></Row>
       <Segmented value={ptt.mode} onChange={mode => set({ ptt: { ...ptt, mode } })} options={[['off', 'Always on'], ['ptt', 'Push to talk'], ['ptm', 'Push to mute']]} />

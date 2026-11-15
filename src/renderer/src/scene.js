@@ -4,7 +4,7 @@ export const uid = () => Math.random().toString(36).slice(2, 9)
 
 export const TYPES = [['phone', 'Android phone'], ['ios', 'iPhone / iPad'], ['webcam', 'Webcam'], ['screen', 'Screen / window'], ['image', 'Image'], ['video', 'Video file'],
   ['browser', 'Web page / alerts'], ['chat', 'YouTube chat'], ['alert', 'Alert box (Super Chat)'], ['text', 'Text'], ['clock', 'Clock'], ['color', 'Color / gradient'],
-  ['banner', 'Overlay banner'], ['fxbg', 'Animated background'], ['fxtext', 'Animated text'], ['lower', 'Lower third'], ['goal', 'Goal bar'], ['mask', 'Blur / mask box'], ['scene', 'Scene (nested)']]
+  ['banner', 'Overlay banner'], ['fxbg', 'Animated background'], ['fxtext', 'Animated text'], ['lower', 'Lower third'], ['goal', 'Goal bar'], ['caption', 'Live captions'], ['sound', 'Sound effect'], ['mic', 'Microphone'], ['mask', 'Blur / mask box'], ['scene', 'Scene (nested)']]
 
 const G0 = { b: 1, c: 1, s: 1, hue: 0, sepia: 0, blur: 0 }
 export const GRADES = {
@@ -22,6 +22,9 @@ export const L = (type, o = {}) => ({
   ...(type === 'color' ? { color: '#7c3aed', color2: '#ec4899', fit: 'stretch' } : {}),
   ...(type === 'lower' ? { x: 0.3, y: 0.82, w: 0.42, h: 0.12, fit: 'stretch', title: 'Your Name', sub: 'Live on YouTube', style: 'bar', color: '#f97316', hold: 6 } : {}),
   ...(type === 'goal' ? { x: 0.5, y: 0.06, w: 0.5, h: 0.06, fit: 'stretch', label: 'Super Chat goal', cur: 0, target: 1000, prefix: '₹', auto: 'superchat', color: '#f97316' } : {}),
+  ...(type === 'mic' ? { micId: 'main', w: 0, h: 0 } : {}),
+  ...(type === 'sound' ? { sfx: 'whoosh', vol: 1, w: 0, h: 0 } : {}),
+  ...(type === 'caption' ? { x: 0.5, y: 0.87, w: 0.72, h: 0.15, fit: 'stretch', style: 'box', color: '#ffffff', bg: '#000000', lines: 2, upper: false, hold: 4, font: 'system' } : {}),
   ...(type === 'mask' ? { x: 0.85, y: 0.1, w: 0.2, h: 0.12, fit: 'stretch', mode: 'blur', amount: 0.6, color: '#000000' } : {}),
   ...(type === 'scene' ? { x: 0.8, y: 0.75, w: 0.3, h: 0.3, src: '', fit: 'contain' } : {}), ...o
 })
@@ -30,6 +33,9 @@ export const newLayer = type => type === 'clock' ? L('text', { name: 'Clock', te
 const S = (name, layers, o = {}) => ({ id: uid(), name, bg: '#0b0b0f', bg2: '', bgBlur: false, layers, ...o })
 const full = (g, o) => L('phone', { w: 1, h: 1, fit: 'cover', grade: grade(g), ...o })
 const cam = o => L('webcam', { src: 'default', fit: 'cover', ...o })
+export const FACE_ON = { on: true, center: true, zoom: 1.25, auto: false, size: 0.42, talk: 1.2, smooth: 0.08, head: 0.12, blur: false, hide: false }
+// webcam down the right side, full height, 30% wide, fading out to the left; face tracking keeps you centred in the strip
+const sideCam = o => cam({ name: 'Webcam · side', x: 0.85, y: 0.5, w: 0.3, h: 1, fade: [0.5, 0, 0, 0], face: { ...FACE_ON }, ...o })
 const text = (t, o) => L('text', { text: t, name: t, ...o })
 const V = { canvas: '1080x1920' }
 const GAME = { canvas: '1920x1080', capFps: 60, maxSize: 1920, capBitrate: 12, fps: 60, bitrate: 9000 }
@@ -77,14 +83,24 @@ export const SIZES = [
 
 // ---------- game presets: pick a game, then a layout (horizontal 16:9 or vertical 9:16) ----------
 export const GAMES = [
-  { id: 'bgmi', name: 'BGMI', pkg: 'com.pubg.imobile' }, { id: 'ff', name: 'Free Fire MAX', pkg: 'com.dts.freefiremax' },
-  { id: 'codm', name: 'Call of Duty: Mobile', pkg: 'com.activision.callofduty.shooter' }, { id: 'mlbb', name: 'Mobile Legends', pkg: 'com.mobile.legends' },
-  { id: 'genshin', name: 'Genshin Impact', pkg: 'com.miHoYo.GenshinImpact' }, { id: 'mcpe', name: 'Minecraft', pkg: 'com.mojang.minecraftpe' },
+  { id: 'bgmi', wiki: 'Battlegrounds_Mobile_India', name: 'BGMI', pkg: 'com.pubg.imobile' }, { id: 'ff', wiki: 'Garena_Free_Fire', name: 'Free Fire MAX', pkg: 'com.dts.freefiremax' },
+  { id: 'codm', wiki: 'Call_of_Duty:_Mobile', name: 'Call of Duty: Mobile', pkg: 'com.activision.callofduty.shooter' }, { id: 'mlbb', name: 'Mobile Legends', pkg: 'com.mobile.legends' },
+  { id: 'genshin', wiki: 'Genshin_Impact', name: 'Genshin Impact', pkg: 'com.miHoYo.GenshinImpact' }, { id: 'mcpe', wiki: 'Minecraft', name: 'Minecraft', pkg: 'com.mojang.minecraftpe' },
   { id: 'asphalt', name: 'Asphalt Legends', pkg: 'com.gameloft.android.ANMP.GloftA9HM' },
   { id: 'cr', name: 'Clash Royale', pkg: 'com.supercell.clashroyale', portrait: true }, { id: 'pogo', name: 'Pokémon GO', pkg: 'com.nianticlabs.pokemongo', portrait: true },
-  { id: 'cs2', name: 'Counter-Strike 2', steam: 730, pc: true }, { id: 'gta', name: 'GTA V', steam: 271590, pc: true }, { id: 'pubgpc', name: 'PUBG: Battlegrounds', steam: 578080, pc: true },
-  { id: 'apex', name: 'Apex Legends', steam: 1172470, pc: true }, { id: 'dota', name: 'Dota 2', steam: 570, pc: true }, { id: 'cyber', name: 'Cyberpunk 2077', steam: 1091500, pc: true },
-  { id: 'rust', name: 'Rust', steam: 252490, pc: true }, { id: 'elden', name: 'Elden Ring', steam: 1245620, pc: true }
+  { id: 'gta6', wiki: 'Grand_Theft_Auto_VI', name: 'GTA VI', console: true, pc: true, tile: ['#ff5f8f', '#ffb03b', '#7b3fe4'], layouts: [
+    { id: 'vice', name: 'Vice sunset · side cam', v: false, make: (b, g) => [b({ w: 1, h: 1, fit: 'cover', grade: grade('Warm') }), sideCam({ borderColor: '#ff5f8f' }),
+      L('color', { name: 'Sunset glow', x: 0.5, y: 0.97, w: 1, h: 0.06, color: '#ff5f8f', color2: '#ffb03b', opacity: 0.85 }),
+      text('VICE CITY · LIVE', { x: 0.2, y: 0.08, h: 0.06, bg: '#ff5f8f', color: '#ffffff' })] },
+    { id: 'cine', name: 'Cinematic bars', v: false, make: b => [b({ w: 1, h: 1, fit: 'cover', grade: grade('Cinematic') }),
+      L('color', { name: 'Top bar', x: 0.5, y: 0.055, w: 1, h: 0.11, color: '#000000' }), L('color', { name: 'Bottom bar', x: 0.5, y: 0.945, w: 1, h: 0.11, color: '#000000' }),
+      cam({ x: 0.9, y: 0.945, w: 0.1, h: 0.178, radius: 0.5, border: 3, face: { ...FACE_ON, zoom: 1.6 } })] },
+    { id: 'vvice', name: 'Vice vertical · face top', v: true, make: b => [b({ x: 0.5, y: 0.66, w: 1, h: 0.68, fit: 'cover', grade: grade('Warm') }),
+      cam({ x: 0.5, y: 0.16, w: 1, h: 0.32, fade: [0, 0, 0, 0.35], face: { ...FACE_ON } }), text('GTA VI LIVE', { x: 0.5, y: 0.33, h: 0.03, bg: '#ff5f8f' })] }
+  ] },
+  { id: 'cs2', wiki: 'Counter-Strike_2', name: 'Counter-Strike 2', steam: 730, pc: true }, { id: 'gta', wiki: 'Grand_Theft_Auto_V', name: 'GTA V', steam: 271590, pc: true }, { id: 'pubgpc', wiki: 'PUBG:_Battlegrounds', name: 'PUBG: Battlegrounds', steam: 578080, pc: true },
+  { id: 'apex', wiki: 'Apex_Legends', name: 'Apex Legends', steam: 1172470, pc: true }, { id: 'dota', wiki: 'Dota_2', name: 'Dota 2', steam: 570, pc: true }, { id: 'cyber', wiki: 'Cyberpunk_2077', name: 'Cyberpunk 2077', steam: 1091500, pc: true },
+  { id: 'rust', name: 'Rust', steam: 252490, pc: true }, { id: 'elden', wiki: 'Elden_Ring', name: 'Elden Ring', steam: 1245620, pc: true }
 ]
 export const steamArt = id => `https://cdn.cloudflare.steamstatic.com/steam/apps/${id}/capsule_231x87.jpg`
 
@@ -92,6 +108,7 @@ const H = { canvas: '1920x1080' }
 export const LAYOUTS = [
   { id: 'full', name: 'Fullscreen + facecam', v: false, make: b => [b({ w: 1, h: 1, fit: 'cover' }), cam({ x: 0.1, y: 0.8, w: 0.17, h: 0.302, radius: 0.5, border: 5 })] },
   { id: 'clean', name: 'Clean gameplay', v: false, make: b => [b({ w: 1, h: 1, fit: 'cover' })] },
+  { id: 'sidefade', name: 'Side cam · fade', v: false, make: b => [b({ w: 1, h: 1, fit: 'cover' }), sideCam()] },
   { id: 'pro', name: 'Facecam frame + title', v: false, make: (b, g) => [b({ w: 1, h: 1, fit: 'cover' }),
     cam({ x: 0.13, y: 0.2, w: 0.22, h: 0.3, radius: 0.08, border: 5, borderColor: '#e4e4e7', shadow: 0.5 }), text(`${g.name.toUpperCase()} LIVE`, { x: 0.5, y: 0.94, h: 0.055, bg: '#18181b' })] },
   { id: 'side', name: 'Game + cam side panel', v: false, make: b => [b({ x: 0.36, y: 0.5, w: 0.7, h: 0.7, radius: 0.03, shadow: 0.5 }),
@@ -103,7 +120,7 @@ export const LAYOUTS = [
     cam({ x: 0.84, y: 0.06, w: 0.24, h: 0.135, radius: 0.5, border: 4 })], bg: true }
 ]
 export function gamePreset(g, lay) {
-  const base = o => L(g.pc ? 'screen' : 'phone', { name: g.name, grade: grade('Vivid'), ...o, ...(g.portrait && !lay.v ? { x: 0.5, y: 0.5, w: 0.5, h: 0.96, fit: 'contain', radius: 0.04 } : {}) })
+  const base = o => L(g.console ? 'webcam' : g.pc ? 'screen' : 'phone', { name: g.console ? g.name + ' · capture card' : g.name, ...(g.console ? { src: 'default' } : {}), grade: grade('Vivid'), ...o, ...(g.portrait && !lay.v ? { x: 0.5, y: 0.5, w: 0.5, h: 0.96, fit: 'contain', radius: 0.04 } : {}) })
   const set = { ...(lay.v ? V : H), fps: 60, bitrate: 9000, ...(g.pc ? {} : { capFps: 60, maxSize: 1920, capBitrate: 12, mode: 'app', appMode: 'guard', pkg: g.pkg }) }
   return { set, scene: S(`${g.name} · ${lay.name}`, lay.make(base, g), { bgBlur: lay.bg || (g.portrait && !lay.v) }) }
 }

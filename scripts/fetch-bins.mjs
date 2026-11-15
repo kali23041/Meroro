@@ -85,6 +85,10 @@ if (!existsSync(icon)) {
   writeFileSync(icon, Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(px)), chunk('IEND', Buffer.alloc(0))]))
 }
 // iPhone USB capture helper (Mac only): built from native/ioscap.swift with the Xcode command line tools.
+// Global click detector for stream pointers (Mac): built from native/mousebtn.swift.
+if (!win && !existsSync(join(dir, 'mousebtn'))) {
+  try { execFileSync('swiftc', ['-O', join(root, 'native', 'mousebtn.swift'), '-o', join(dir, 'mousebtn')], { stdio: 'inherit' }) } catch { console.warn('mousebtn not built: click effects for stream pointers need the Xcode command line tools') }
+}
 if (!win && !existsSync(join(dir, 'ioscap'))) {
   try { execFileSync('swiftc', ['-O', join(root, 'native', 'ioscap.swift'), '-o', join(dir, 'ioscap')], { stdio: 'inherit' }) }
   catch { console.warn('swiftc not found: iPhone USB capture is disabled (install Xcode command line tools)') }

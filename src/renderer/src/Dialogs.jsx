@@ -1,8 +1,12 @@
 // Pop-up windows: source settings (with live preview), scene settings, and the floating chat window.
 import { useEffect, useRef, useState } from 'react'
-import { X, Image as ImageIcon, Smartphone, MessageSquare, BellRing, Globe, Trash2, GripHorizontal, Sparkles, Gamepad2 } from 'lucide-react'
+import { Play, RefreshCw, RotateCcw, X, Image as ImageIcon, Smartphone, MessageSquare, BellRing, Globe, Trash2, GripHorizontal, Sparkles, Gamepad2 } from 'lucide-react'
 import { Button, Input, Row, Segmented, Select, Switch, Slider, cx } from './ui'
 import { SIZES } from './scene'
+import { FaceControls } from './Face'
+import { SFX } from './sfx'
+import { voiceName } from './voice'
+import { CAP_STYLES, CAP_LOOKS, CAP_FONTS, CAP_HL, CAP_ANIMS } from './capfx'
 
 const api = window.api
 const Color = ({ value, onChange }) => <input type="color" value={value || '#000000'} onChange={e => onChange(e.target.value)} className="h-7 w-10 shrink-0 rounded-md bg-transparent border border-white/10 p-0.5" />
@@ -64,28 +68,39 @@ function Preview({ d, eng, thumb }) {
   )
 }
 
-export function SourceDialog({ layer, isNew, cams, eng, onSave, onDelete, onClose, maps, app, mapFor, scenes = [] }) {
-  const [d, setD] = useState({ ...layer, keymap: layer.type === 'phone' ? mapFor(layer.pkg || app?.pkg) : undefined }), [shots, setShots] = useState([])
-  const up = p => setD(o => ({ ...o, ...p }))
-  useEffect(() => { if (d.type === 'screen') api.invoke('screen:thumbs').then(setShots).catch(() => {}) }, [])
-  const thumb = shots.find(x => x.id === d.src)?.thumb
-  const [iosList, setIosList] = useState(null)
-  useEffect(() => { if (d.type === 'ios') api.invoke('ios:list').then(setIosList).catch(() => {}) }, [])
-  return (
-    <Dialog title={isNew ? `Add ${d.name.toLowerCase()}` : `${d.name} settings`} onClose={onClose}
-      footer={<>
-        {!isNew && <Button variant="ghost" className="text-red-400" onClick={() => { onDelete(d.id); onClose() }}><Trash2 size={13} />Remove</Button>}
-        <div className="flex-1" />
-        <Button onClick={onClose}>Cancel</Button>
-        <Button variant="primary" className="px-4" onClick={() => { onSave(d); onClose() }}>{isNew ? 'Add source' : 'Save'}</Button>
-      </>}>
-      <div className="flex gap-3">
-        <div className="w-[340px] shrink-0"><Preview d={d} eng={eng} thumb={thumb} /></div>
-        <div className="flex-1 min-w-0 space-y-1.5">
-          <Row label="Name"><Input autoFocus value={d.name} onChange={e => up({ name: e.target.value })} /></Row>
+// Every setting of a source, used by the source window and, live, by the Props panel.
+// Microphone source: the device, level, mute, voice and monitoring live with the mic itself (shared by every scene that shows it).
+function MicFields({ d, sx, setx, micList = [] }) {
+  const main = d.micId === 'main', m = main ? { device: sx.mic, vol: sx.micVol, mute: sx.micMute, mon: sx.mix?.mic?.mon, voice: sx.voice } : sx.mics?.find(x => x.id === d.micId) || {}
+  const up = o => main ? setx({ ...(o.device !== undefined ? { mic: o.device } : {}), ...(o.vol !== undefined ? { micVol: o.vol } : {}), ...(o.mute !== undefined ? { micMute: o.mute } : {}), ...(o.mon !== undefined ? { mix: { ...sx.mix, mic: { ...sx.mix?.mic, mon: o.mon } } } : {}) })
+    : setx({ mics: sx.mics.map(x => x.id === d.micId ? { ...x, ...o } : x) })
+  return <>
+    <Row label="Device"><Select className="flex-1" value={m.device || 'default'} onChange={device => up({ device })} options={[['default', 'System default'], ...micList]} /></Row>
+    <Row label="Volume"><Slider value={m.vol ?? 1} onChange={vol => up({ vol })} max={1.5} /></Row>
+    <Row label="Muted"><span className="flex-1" /><Switch checked={!!m.mute} onChange={mute => up({ mute })} /></Row>
+    <Row label="Voice"><span className="flex-1 truncate text-[12px] text-zinc-300">{voiceName(sx, m.voice)}</span><Button className="h-8" onClick={() => dispatchEvent(new CustomEvent('meroro:voice', { detail: d.micId }))}>Voice changer</Button></Row>
+    <Row label="Hear it"><span className="flex-1 text-[11px] text-zinc-500">Use headphones</span><Switch checked={!!m.mon} onChange={mon => up({ mon })} /></Row>
+  </>
+}
+
+// Which directions the picture can actually move right now (it needs spare room in its box, or a trimmed edge to reveal).
+function MoveRoom({ id }) {
+  const [r, setR] = useState(null)
+  useEffect(() => { const t = setInterval(() => { const g = window.__eng?.geo?.[id]; if (g) setR(o => o && o.x === !!g.canX && o.y === !!g.canY ? o : { x: !!g.canX, y: !!g.canY }) }, 400); return () => clearInterval(t) }, [id])
+  if (!r || (r.x && r.y)) return null
+  return <p className="text-[10.5px] leading-snug text-amber-300/90">{!r.x && !r.y ? 'The picture fills its box exactly, so there is nothing to move. Zoom in, or use Fit.' : !r.x ? 'Left / right: no room — the picture already fills the width. Up / down works.' : 'Up / down: no room — the picture already fills the height. Left / right works.'}</p>
+}
+
+export function SourceFields({ d, up, inline, cams = [], maps = {}, app, front, scenes = [], cap, ready, onRestart, onRefresh, onUseApp, onKeymap, sx, setx, micList, onCapture }) {
+  const [shots, setShots] = useState([]), [iosList, setIosList] = useState(null)
+  useEffect(() => { if (d.type === 'screen') api.invoke('screen:thumbs').then(setShots).catch(() => {}) }, [d.type])
+  useEffect(() => { if (d.type === 'ios') api.invoke('ios:list').then(setIosList).catch(() => {}) }, [d.type])
+  return <>
+          <Row label="Name"><Input autoFocus={!inline} value={d.name} onChange={e => up({ name: e.target.value })} /></Row>
           {d.type === 'ios' && <Row label="Connection"><Select className="flex-1" value={d.src} onChange={src => up({ src })}
             options={[...(iosList?.usb || []).map(x => ['usb:' + x.id, x.name + ' · USB']), ['airplay', 'AirPlay (wireless)'], ...(d.src?.startsWith('usb:') && !iosList?.usb.some(x => 'usb:' + x.id === d.src) ? [[d.src, d.name + ' · USB (not plugged in)']] : [])]} /></Row>}
           {d.type === 'webcam' && <Row label="Camera"><Select className="flex-1" value={d.src || 'default'} onChange={src => up({ src })} options={[['default', 'System default'], ...cams]} /></Row>}
+          {d.type === 'webcam' && <FaceControls l={d} up={up} />}
           {d.type === 'screen' && <Row label="Capture"><Select className="flex-1" value={d.src || ''} onChange={src => up({ src, name: shots.find(x => x.id === src)?.name || d.name })}
             options={[['', 'Choose screen or window…'], ...shots.map(x => [x.id, x.name]), ...(d.src && !shots.some(x => x.id === d.src) ? [[d.src, d.name]] : [])]} /></Row>}
           {(d.type === 'image' || d.type === 'video') && <Row label="File">
@@ -99,6 +114,41 @@ export function SourceDialog({ layer, isNew, cams, eng, onSave, onDelete, onClos
             <Row label="Pill"><Color value={d.bg} onChange={bg => up({ bg })} /><Switch checked={d.bgOn} onChange={bgOn => up({ bgOn })} /></Row>
           </>}
           {d.type === 'color' && <Row label="Colors"><Color value={d.color} onChange={color => up({ color })} /><Color value={d.color2} onChange={color2 => up({ color2 })} /></Row>}
+          {d.type === 'phone' && <>
+            <Row label="Landscape lock"><span className="flex-1 text-[11px] text-zinc-500">When the phone turns upright</span><Switch checked={!!d.landLock} onChange={landLock => up({ landLock })} /></Row>
+            {d.landLock && <>
+              <Row label="Then show"><Select className="flex-1" value={d.landScene || ''} onChange={landScene => up({ landScene })}
+                options={[['', 'Hide the phone screen (cover)'], ...scenes.filter(x => !x.layers?.some(l => l.id === d.id)).map(x => [x.id, 'Scene: ' + x.name])]} /></Row>
+              <p className="text-[11px] leading-relaxed text-zinc-500">Goes back by itself when the phone turns sideways again. Tip: a “Be right back” scene from Browse presets → Studio works well here.</p>
+            </>}
+          </>}
+          {d.type === 'phone' && sx && onCapture && <>
+            <Row label="Capture quality"><Select className="flex-1" value={String(sx.maxSize)} onChange={v => onCapture({ maxSize: +v })} options={[[0, 'Native (sharpest)'], [2560, '1440p / 2K'], [1920, '1080p'], [1600, '900p'], [1280, '720p']].map(([v, n]) => [String(v), n])} /></Row>
+            <Row label="Capture fps"><Select className="flex-1" value={String(sx.capFps)} onChange={v => onCapture({ capFps: +v })} options={[[120, '120 fps'], [90, '90 fps'], [60, '60 fps'], [30, '30 fps']].map(([v, n]) => [String(v), n])} /></Row>
+            <Row label="Capture bitrate"><Select className="flex-1" value={String(sx.capBitrate)} onChange={v => onCapture({ capBitrate: +v })} options={[[4, '4 Mbps'], [8, '8 Mbps'], [12, '12 Mbps'], [16, '16 Mbps'], [24, '24 Mbps'], [32, '32 Mbps'], [40, '40 Mbps']].map(([v, n]) => [String(v), n])} /></Row>
+          </>}
+          {(d.type === 'webcam' || d.type === 'screen') && <>
+            <Row label={d.type === 'webcam' ? 'Camera quality' : 'Max resolution'}><Select className="flex-1" value={d.res || (d.type === 'webcam' ? '720' : '')} onChange={res => up({ res })}
+              options={d.type === 'webcam' ? [['720', '720p'], ['1080', '1080p'], ['1440', '1440p / 2K'], ['2160', '4K']] : [['', 'Native (sharpest)'], ['2160', '4K'], ['1440', '1440p / 2K'], ['1080', '1080p']]} /></Row>
+            <Row label="Frame rate"><Select className="flex-1" value={String(d.capFps || 30)} onChange={v => up({ capFps: +v })} options={[['30', '30 fps'], ['60', '60 fps']]} /></Row>
+          </>}
+          {d.type === 'video' && <>
+            <Row label="Play its sound"><span className="flex-1 text-[11px] text-zinc-500">Into the stream and your speakers</span><Switch checked={!!d.sound} onChange={sound => up({ sound })} /></Row>
+            {d.sound && <Row label="Sound volume"><Slider value={d.vol ?? 1} onChange={vol => up({ vol })} max={1.5} /></Row>}
+            <Row label="Loop"><span className="flex-1" /><Switch checked={d.loop !== false} onChange={loop => up({ loop })} /></Row>
+          </>}
+          {MEDIA.includes(d.type) && <>
+            <Row label="Zoom"><Slider value={d.zoom ?? 1} onChange={zoom => up({ zoom })} min={0.5} max={3} step={0.01} format={v => v.toFixed(2) + '×'} />
+              <Button className="h-8 px-2" disabled={(d.zoom ?? 1) === 1} title="Back to 1×" onClick={() => up({ zoom: 1, zx: 0.5, zy: 0.5 })}><RotateCcw size={12} /></Button></Row>
+            <Row label="Move inside"><div className="flex-1 flex items-center gap-1.5">
+              <div className="grid grid-cols-3 gap-0.5">{[['', 0, 0], ['↑', 0, -1], ['', 0, 0], ['←', -1, 0], ['•', 0, 0], ['→', 1, 0], ['', 0, 0], ['↓', 0, 1], ['', 0, 0]].map(([t, x, y], i) => t
+                ? <button key={i} title={t === '•' ? 'Centre' : 'Move ' + { '↑': 'up', '↓': 'down', '←': 'left', '→': 'right' }[t]} onClick={() => up(t === '•' ? { zx: 0.5, zy: 0.5 } : { zx: Math.min(1, Math.max(0, (d.zx ?? 0.5) + x * 0.05)), zy: Math.min(1, Math.max(0, (d.zy ?? 0.5) + y * 0.05)) })}
+                  className="size-7 grid place-items-center rounded-md bg-[#323236] text-[12px] text-zinc-200 hover:bg-[#3e3e43]">{t}</button> : <span key={i} />)}</div>
+              <div className="flex-1 min-w-0 space-y-1"><MoveRoom id={d.id} /><Slider value={d.zx ?? 0.5} onChange={zx => up({ zx })} format={v => v < 0.48 ? 'Left ' + Math.round((0.5 - v) * 200) : v > 0.52 ? 'Right ' + Math.round((v - 0.5) * 200) : 'Centre'} />
+                <Slider value={d.zy ?? 0.5} onChange={zy => up({ zy })} format={v => v < 0.48 ? 'Up ' + Math.round((0.5 - v) * 200) : v > 0.52 ? 'Down ' + Math.round((v - 0.5) * 200) : 'Centre'} /></div>
+            </div></Row>
+            <p className="-mt-0.5 text-[10.5px] text-zinc-500">Zoomed in: picks which part shows. Picture smaller than its box (Fit, or zoomed out): moves it inside the box.</p>
+          </>}
           {MEDIA.includes(d.type) && <Row label="Fit"><div className="flex-1"><Segmented value={d.fit} onChange={fit => up({ fit })} options={[['contain', 'Fit'], ['cover', 'Fill'], ['stretch', 'Stretch']]} /></div></Row>}
           {d.type === 'lower' && <>
             <Row label="Title"><Input value={d.title} onChange={e => up({ title: e.target.value })} /></Row>
@@ -106,6 +156,17 @@ export function SourceDialog({ layer, isNew, cams, eng, onSave, onDelete, onClos
             <Row label="Style"><div className="flex-1"><Segmented value={d.style} onChange={style => up({ style })} options={[['bar', 'Bar'], ['pill', 'Pill'], ['clean', 'Clean']]} /></div></Row>
             <Row label="Colour"><Color value={d.color} onChange={color => up({ color })} /></Row>
             <Row label="Stays for"><Select className="flex-1" value={String(d.hold)} onChange={v => up({ hold: +v })} options={[['4', '4 s'], ['6', '6 s'], ['10', '10 s'], ['20', '20 s'], ['0', 'Until hidden']]} /></Row>
+          </>}
+          {d.type === 'caption' && <>
+            <Row label="Style preset"><Select className="flex-1" value={d.preset || ''} onChange={v => { const st = CAP_STYLES.find(x => x.name === v); if (st) { const { name, ...look } = st; up({ ...look, preset: name }) } }} options={[['', 'Custom'], ...CAP_STYLES.map(x => [x.name, x.name])]} /></Row>
+            <Row label="Look"><Select className="flex-1" value={d.style} onChange={style => up({ style, preset: '' })} options={CAP_LOOKS} /></Row>
+            <Row label="Font"><Select className="flex-1" value={d.font || 'sys'} onChange={font => up({ font, preset: '' })} options={CAP_FONTS} /></Row>
+            <Row label="Text / back"><Color value={d.color} onChange={color => up({ color, preset: '' })} /><Color value={d.bg} onChange={bg => up({ bg, preset: '' })} /></Row>
+            <Row label="New word"><Select className="flex-1" value={d.hlMode || 'none'} onChange={hlMode => up({ hlMode, preset: '' })} options={CAP_HL} /><Color value={d.hl || '#facc15'} onChange={hl => up({ hl, preset: '' })} /></Row>
+            <Row label="Animation"><Select className="flex-1" value={d.anim || 'none'} onChange={anim => up({ anim, preset: '' })} options={CAP_ANIMS} /></Row>
+            <Row label="Lines"><div className="flex-1"><Segmented value={String(d.lines)} onChange={v => up({ lines: +v })} options={[['1', '1'], ['2', '2'], ['3', '3']]} /></div></Row>
+            <Row label="CAPITALS"><span className="flex-1" /><Switch checked={!!d.upper} onChange={upper => up({ upper })} /></Row>
+            <Row label="Clears after"><Select className="flex-1" value={String(d.hold)} onChange={v => up({ hold: +v })} options={[['2', '2 s of silence'], ['4', '4 s of silence'], ['8', '8 s of silence']]} /></Row>
           </>}
           {d.type === 'goal' && <>
             <Row label="Label"><Input value={d.label} onChange={e => up({ label: e.target.value })} /></Row>
@@ -124,12 +185,48 @@ export function SourceDialog({ layer, isNew, cams, eng, onSave, onDelete, onClos
             <Row label="Style"><div className="flex-1"><Segmented value={d.chatStyle || 'classic'} onChange={chatStyle => up({ chatStyle })} options={[['classic', 'Classic'], ['bubble', 'Bubble'], ['minimal', 'Minimal'], ['game', 'Game']]} /></div></Row>
             <Row label="Fade out"><Select className="flex-1" value={String(d.chatFade || 0)} onChange={v => up({ chatFade: +v })} options={[['0', 'Never'], ['10', 'After 10 s'], ['20', 'After 20 s'], ['45', 'After 45 s']]} /></Row>
           </>}
+          {d.type === 'mic' && sx && <MicFields d={d} sx={sx} setx={setx} micList={micList} onCapture={onCapture} />}
+          {d.type === 'sound' && <>
+            <Row label="Sound"><Select className="flex-1" value={d.sfx} onChange={sfx => { up({ sfx }); window.__eng?.playSfx(sfx, d.vol ?? 1) }} options={SFX} />
+              <Button className="h-8" onClick={() => window.__eng?.playSfx(d.sfx, d.vol ?? 1)}><Play size={12} />Play</Button></Row>
+            <Row label="Volume"><Slider value={d.vol ?? 1} onChange={vol => up({ vol })} max={1.5} /></Row>
+            <p className="text-[11px] text-zinc-500">Plays on the Effects channel whenever the effect it belongs to plays.</p>
+          </>}
           <Row label="Visible"><Switch checked={d.visible} onChange={visible => up({ visible })} /></Row>
+          {d.type === 'phone' && <Row label="Capture"><span className={cx('flex-1 flex items-center gap-1.5 text-[12px]', cap === 'on' ? 'text-emerald-400' : ready ? 'text-zinc-400' : 'text-amber-300')}>
+            <span className={cx('size-1.5 rounded-full', cap === 'on' ? 'bg-emerald-400' : cap === 'starting' ? 'bg-amber-400 animate-pulse' : 'bg-zinc-500')} />{!ready ? 'No phone connected' : cap === 'on' ? 'Running' : cap === 'starting' ? 'Starting…' : 'Stopped'}</span>
+            <Button className="h-8" onClick={onRefresh} title="Look for the phone and reload its apps"><RefreshCw size={12} />Refresh</Button>
+            <Button className="h-8" disabled={!ready} onClick={onRestart} title="Stop and start capture again"><RotateCcw size={12} />Restart</Button></Row>}
+          {d.type === 'phone' && <Row label="App"><span className="flex-1 min-w-0 truncate text-[12px] text-zinc-300">{d.pkg ? d.name : 'Whole phone screen'}</span>
+            <Button className="h-8" disabled={!front || front.pkg === d.pkg} title={front ? 'Switch this source to ' + front.name : 'Open an app on the phone first'} onClick={() => { up({ pkg: front.pkg, name: front.name }); onUseApp?.(front.pkg) }}>
+              <Smartphone size={12} />{front ? 'Use ' + front.name : 'No app open'}</Button></Row>}
           {d.type === 'phone' && <>
             <div className="pt-2 flex items-center gap-1.5 text-[12px] font-semibold text-white"><Gamepad2 size={13} />Game controls</div>
-            <Row label={`For ${d.pkg ? d.name : app?.name || 'this app'}`}><Select className="flex-1 min-w-0" value={d.keymap || ''} onChange={keymap => up({ keymap })}
+            <Row label={`For ${d.pkg ? d.name : app?.name || 'this app'}`}><Select className="flex-1 min-w-0" value={d.keymap || ''} onChange={keymap => onKeymap ? onKeymap(keymap) : up({ keymap })}
               options={[['', 'Off · no key mapping'], ...Object.entries(maps).map(([k, m]) => [k, m.name + ' preset'])]} /></Row>
           </>}
+  </>
+}
+
+export function SourceDialog({ layer, isNew, cams, eng, onSave, onDelete, onClose, maps, app, mapFor, scenes = [], cap, ready, onRestart, onRefresh, front, onUseApp, sx, setx, micList, onCapture }) {
+  const [d, setD] = useState({ ...layer, keymap: layer.type === 'phone' ? mapFor(layer.pkg || app?.pkg) : undefined }), [shots, setShots] = useState([])
+  const up = p => setD(o => ({ ...o, ...p }))
+  useEffect(() => { if (d.type === 'screen') api.invoke('screen:thumbs').then(setShots).catch(() => {}) }, [])
+  const thumb = shots.find(x => x.id === d.src)?.thumb
+  const [iosList, setIosList] = useState(null)
+  useEffect(() => { if (d.type === 'ios') api.invoke('ios:list').then(setIosList).catch(() => {}) }, [])
+  return (
+    <Dialog title={isNew ? `Add ${d.name.toLowerCase()}` : `${d.name} settings`} onClose={onClose}
+      footer={<>
+        {!isNew && <Button variant="ghost" className="text-red-400" onClick={() => { onDelete(d.id); onClose() }}><Trash2 size={13} />Remove</Button>}
+        <div className="flex-1" />
+        <Button onClick={onClose}>Cancel</Button>
+        <Button variant="primary" className="px-4" onClick={() => { onSave(d); onClose() }}>{isNew ? 'Add source' : 'Save'}</Button>
+      </>}>
+      <div className="flex gap-3">
+        <div className="w-[340px] shrink-0"><Preview d={d} eng={eng} thumb={thumb} /></div>
+        <div className="flex-1 min-w-0 space-y-1.5">
+          <SourceFields d={d} up={up} cams={cams} maps={maps} app={app} front={front} scenes={scenes} cap={cap} ready={ready} onRestart={onRestart} onRefresh={onRefresh} onUseApp={onUseApp} sx={sx} setx={setx} micList={micList} />
         </div>
       </div>
     </Dialog>
@@ -156,7 +253,7 @@ export function SceneDialog({ scene, isNew, canvas, canDelete, onSave, onDelete,
           <div className="w-full rounded-xl ring-1 ring-white/10 grid place-items-center overflow-hidden" style={{ aspectRatio: w / h, maxHeight: 300, background: d.bg2 ? `linear-gradient(135deg,${d.bg},${d.bg2})` : d.bg }}>
             <span className="text-[13px] font-semibold text-white/80">{d.name}</span>
           </div>
-          <p className="mt-1.5 text-center text-[11px] text-zinc-500">{w}×{h}{size !== canvas ? ` · was ${canvas.replace('x', '×')}` : ''}</p>
+          <p className="mt-1.5 text-center text-[11px] text-zinc-500">Frame size {w}×{h}</p>
         </div>
         <div className="flex-1 min-w-0 space-y-1.5">
           <Row label="Name"><Input autoFocus value={d.name} onChange={e => up({ name: e.target.value })} /></Row>
@@ -164,19 +261,6 @@ export function SceneDialog({ scene, isNew, canvas, canDelete, onSave, onDelete,
           <Row label="Background"><Color value={d.bg} onChange={bg => up({ bg })} /></Row>
           <Row label="Gradient"><Color value={d.bg2 || d.bg} onChange={bg2 => up({ bg2 })} /><Switch checked={!!d.bg2} onChange={v => up({ bg2: v ? '#3f3f46' : '' })} /></Row>
           <Row label="Blurred backdrop"><Switch checked={!!d.bgBlur} onChange={bgBlur => up({ bgBlur })} /></Row>
-          <div className="pt-1 text-[12px] font-semibold text-white">Size</div>
-          <div className={cx('grid grid-cols-2 gap-1', busy && 'opacity-40 pointer-events-none')}>
-            {SIZES.map(([v, name, sub]) => { const [a, b] = v.split('x').map(Number), k = 16 / Math.max(a, b); return (
-              <button key={v} onClick={() => setSize(v)} className={cx('flex items-center gap-2 rounded-lg px-2 h-9 text-left transition-colors', v === size ? 'bg-accent text-white' : 'bg-[#323236] text-zinc-300 hover:bg-[#3a3a3f]')}>
-                <span className="w-4 shrink-0 grid place-items-center"><span className="rounded-[2px] border border-current opacity-70" style={{ width: a * k, height: b * k }} /></span>
-                <span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-medium">{name}</span><span className="block truncate text-[10px] text-zinc-500">{a}×{b}</span></span>
-              </button>) })}
-          </div>
-          <Row label="Custom">
-            <Input key={'w' + size} disabled={busy} defaultValue={w} onBlur={e => { const n = Math.round(+e.target.value / 2) * 2; if (n >= 240 && n <= 3840) setSize(n + 'x' + h) }} onKeyDown={e => e.key === 'Enter' && e.target.blur()} />
-            <span className="text-zinc-500">×</span>
-            <Input key={'h' + size} disabled={busy} defaultValue={h} onBlur={e => { const n = Math.round(+e.target.value / 2) * 2; if (n >= 240 && n <= 3840) setSize(w + 'x' + n) }} onKeyDown={e => e.key === 'Enter' && e.target.blur()} />
-          </Row>
           {d.bgBlur && <Row label="Blur from"><Select className="flex-1" value={srcs.some(x => x.id === d.bgSrc) ? d.bgSrc : ''} onChange={v => v === '__pick' ? (onClose(), pickBg()) : up({ bgSrc: v })}
             options={[['', 'Phone'], ...srcs.map(x => [x.id, x.name]), ...(isNew ? [] : [['__pick', 'Choose a screen or window…']])]} /></Row>}
         </div>

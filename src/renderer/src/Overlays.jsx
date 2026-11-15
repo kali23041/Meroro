@@ -1,7 +1,9 @@
 // Overlays page: animated libraries (name banners, stream scenes, alert effects) with a live editor.
 // Everything is drawn in code, so text, fonts, colours, glow and animation stay editable after it is in a scene.
+import CaptionStyles from './CaptionStyles'
+import { CAP_STYLES } from './capfx'
 import { useEffect, useRef, useState } from 'react'
-import { Wand2, Image as ImageIcon, Trash2, Copy, Download, Check, PanelBottom, Clapperboard, BellRing, Save } from 'lucide-react'
+import { Wand2, Image as ImageIcon, Trash2, Copy, Download, Check, PanelBottom, Clapperboard, BellRing, Save, Type } from 'lucide-react'
 import { Button, Input, Row, Section, Segmented, Select, Slider, Switch, cx } from './ui'
 import { L, uid } from './scene'
 import { FONTS, PALETTES, ANIMS, TPL_NAMES, BG_NAMES, TX_NAMES, AFX_NAMES, BANNERS, SCENES, SCENE_KINDS, ALERTS, ALERT_KINDS, drawBanner, drawBg, drawText, drawScenePreview, drawAlertFx } from './fx'
@@ -33,8 +35,8 @@ function Looks({ v, up, anim }) { // font, colours, palette row — shared by ev
   </>
 }
 
-export default function Overlays({ editing, onBanner, onScene, onAlert, onSave, canvas }) {
-  const [tab, setTab] = useState('banner'), [filter, setFilter] = useState('all'), [cur, setCur] = useState(null), [img, setImg] = useState(null), [done, setDone] = useState('')
+export default function Overlays({ editing, onBanner, onScene, onAlert, onSave, canvas, onCaption, capStyle, tab0 }) {
+  const [tab, setTab] = useState(tab0 || 'banner'), [filter, setFilter] = useState('all'), [cur, setCur] = useState(null), [img, setImg] = useState(null), [done, setDone] = useState('')
   useEffect(() => { // editing a layer that is already in a scene
     if (!editing) return
     setCur(editing.type === 'banner' ? { type: 'banner', name: editing.name, b: { ...editing.b }, src: editing.src || '' } : editing.type === 'fxbg' ? { type: 'bg', name: editing.name, b: { ...editing.b } } : { type: 'text', name: editing.name, b: { ...editing.b } })
@@ -47,8 +49,8 @@ export default function Overlays({ editing, onBanner, onScene, onAlert, onSave, 
   const up = p => setCur(c => ({ ...c, ...p })), upB = p => setCur(c => ({ ...c, b: { ...c.b, ...p } }))
   const flash = k => { setDone(k); setTimeout(() => setDone(''), 1800) }
   const [cw, ch] = canvas.split('x').map(Number), tall = ch > cw
-  const tabs = [['banner', 'Name banners', PanelBottom], ['scene', 'Stream scenes', Clapperboard], ['alert', 'Alert effects', BellRing]]
-  const chips = tab === 'banner' ? [['all', 'All'], ...Object.entries(TPL_NAMES)] : tab === 'scene' ? [['all', 'All'], ...Object.entries(SCENE_KINDS).map(([k, v]) => [k, v[0]])] : [['all', 'All'], ...Object.entries(AFX_NAMES)]
+  const tabs = [['banner', 'Name banners', PanelBottom], ['scene', 'Stream scenes', Clapperboard], ['alert', 'Alert effects', BellRing], ['caption', 'Captions', Type]]
+  const chips = tab === 'caption' ? [] : tab === 'banner' ? [['all', 'All'], ...Object.entries(TPL_NAMES)] : tab === 'scene' ? [['all', 'All'], ...Object.entries(SCENE_KINDS).map(([k, v]) => [k, v[0]])] : [['all', 'All'], ...Object.entries(AFX_NAMES)]
 
   const useAlert = () => { const k = cur.kind || 'superchat', K = ALERT_KINDS[k]; onAlert({ on: k === 'subscribe' ? 'timer' : k, arg: k === 'subscribe' ? '10' : '', alert: cur.title ?? K[1], sub: cur.sub ?? K[2], afx: cur.f }); flash('ok') }
   const useScene = () => { const s = cur.s, st = s.title.style === 'stack'
@@ -62,11 +64,12 @@ export default function Overlays({ editing, onBanner, onScene, onAlert, onSave, 
       <div className="flex-1 min-w-0 flex flex-col">
         <div className="flex items-center gap-3 px-5 pt-4 pb-3">
           <Wand2 size={18} className="text-zinc-400" /><h1 className="text-[18px] font-bold tracking-tight text-white mr-2">Overlays</h1>
-          <div className="w-[460px]"><Segmented value={tab} onChange={t => { setTab(t); setFilter('all') }} options={tabs} /></div>
-          <span className="ml-auto text-[12px] text-zinc-500">{tab === 'banner' ? BANNERS.length : tab === 'scene' ? SCENES.length : ALERTS.length} animated presets · click one to edit</span>
+          <div className="w-[600px]"><Segmented value={tab} onChange={t => { setTab(t); setFilter('all') }} options={tabs} /></div>
+          <span className="ml-auto text-[12px] text-zinc-500">{tab === 'caption' ? `${CAP_STYLES.length} caption styles · click one to use it` : `${tab === 'banner' ? BANNERS.length : tab === 'scene' ? SCENES.length : ALERTS.length} animated presets · click one to edit`}</span>
         </div>
         <div className="flex gap-1 px-5 pb-3 overflow-x-auto">{chips.map(([k, n]) => <button key={k} onClick={() => setFilter(k)} className={cx('shrink-0 h-7 px-3 rounded-lg text-[12px] font-medium', filter === k ? 'bg-accent text-white' : 'bg-[#242427] text-zinc-400 hover:text-white')}>{n}</button>)}</div>
         <div className="flex-1 overflow-y-auto px-5 pb-5">
+          {tab === 'caption' && <CaptionStyles Anim={Anim} onUse={onCaption} current={capStyle} />}
           <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-2.5">
             {tab === 'banner' && BANNERS.filter(p => filter === 'all' || p.b.tpl === filter).map(p => (
               <button key={p.name} onClick={() => setCur({ type: 'banner', name: p.name, b: { ...p.b }, src: '' })} className={cx('text-left rounded-xl overflow-hidden bg-[#242427] border transition-all hover:-translate-y-0.5', cur?.name === p.name ? 'border-white/60' : 'border-transparent hover:border-white/25')}>
@@ -83,7 +86,7 @@ export default function Overlays({ editing, onBanner, onScene, onAlert, onSave, 
 
       {/* editor */}
       <aside className="w-[350px] shrink-0 overflow-y-auto border-l border-white/[0.06] p-2">
-        {!cur ? <div className="h-full grid place-items-center text-center text-[12px] text-zinc-500 px-8">Pick a preset to edit its text, font, colours, glow and animation, then copy it into your scene.</div> : <>
+        {!cur ? <div className="h-full grid place-items-center text-center text-[12px] text-zinc-500 px-8">{tab === 'caption' ? 'Click a style to use it in the current scene. Change its font, colours and animation in the caption source’s settings.' : 'Pick a preset to edit its text, font, colours, glow and animation, then copy it into your scene.'}</div> : <>
           <div className="rounded-xl overflow-hidden ring-1 ring-white/10 mb-2">
             {cur.type === 'banner' && <Anim w={640} h={360} draw={bannerDraw(cur.b, img)} className="w-full block" />}
             {cur.type === 'scene' && <Anim w={640} h={360} draw={(c, w, h, t) => drawScenePreview(c, w, h, cur.s, t)} className="w-full block" />}

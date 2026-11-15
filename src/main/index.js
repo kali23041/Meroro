@@ -1,10 +1,11 @@
-import { app, BrowserWindow, ipcMain, safeStorage, shell, systemPreferences, powerSaveBlocker, dialog, desktopCapturer, globalShortcut, session as esession } from 'electron'
+import { app, BrowserWindow, ipcMain, safeStorage, shell, systemPreferences, powerSaveBlocker, dialog, desktopCapturer, globalShortcut, protocol, screen, session as esession } from 'electron'
 import { readFile } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { spawn, execFile } from 'node:child_process'
-import { readFileSync, writeFileSync, mkdirSync, unlinkSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, unlinkSync, existsSync, readdirSync, renameSync, statSync, createReadStream } from 'node:fs'
+import { Readable } from 'node:stream'
 import { splashWindow } from './splash'
 import { BRAND } from '../shared/brand'
 import { Chat } from './chat'
@@ -14,8 +15,11 @@ import { adb, listDevices, listApps, foreground, deviceInfo, overlayApps, cleanO
 const mac = process.platform === 'darwin'
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 app.commandLine.appendSwitch('disable-renderer-backgrounding')
+app.commandLine.appendSwitch('enable-experimental-web-platform-features') // FaceDetector for webcam face tracking
 app.commandLine.appendSwitch('disable-background-timer-throttling')
 
+// meroro://models/<file> serves downloaded speech models to the captions worker (stable URL, so the engine's own cache is reused)
+protocol.registerSchemesAsPrivileged([{ scheme: 'meroro', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }])
 let win, session, blocker
 const outs = new Map()
 const send = (ch, ...a) => { if (win && !win.isDestroyed()) win.webContents.send(ch, ...a) }
@@ -36,7 +40,11 @@ function createWindow() {
   Promise.race([Promise.all([setup, loaded]), new Promise(r => setTimeout(r, 9000))]).then(() => loaded)
     .then(() => setTimeout(() => { splash?.destroy(); win.show(); win.focus() }, splash ? Math.max(350, 1600 - (Date.now() - t0)) : 0))
   if (!app.isPackaged && process.env.MERORO_TEST) createRequire(__filename)(process.env.MERORO_TEST)({ win, send, app }) // dev self-test hook
-  win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' } })
+  win.webContents.setWindowOpenHandler(({ url, frameName }) => {
+    if (url === 'about:blank' && frameName === 'meroro-frames') // "All frames": a real window the studio draws into
+      return { action: 'allow', overrideBrowserWindowOptions: { width: 1280, height: 720, minWidth: 320, minHeight: 200, title: 'All frames · Meroro', backgroundColor: '#000000', frame: false, roundedCorners: true, hasShadow: true, autoHideMenuBar: true, show: true } }
+    shell.openExternal(url); return { action: 'deny' }
+  })
   if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL)
   else win.loadFile(join(__dirname, '../renderer/index.html'))
 }
@@ -58,12 +66,14 @@ ipcMain.handle('settings:get', () => {
   try {
     const s = JSON.parse(readFileSync(file(), 'utf8'))
     if (s.keyEnc) { s.key = safeStorage.decryptString(Buffer.from(s.keyEnc, 'base64')); delete s.keyEnc }
+    for (const d of s.dests || []) if (d.keyEnc) { try { d.key = safeStorage.decryptString(Buffer.from(d.keyEnc, 'base64')) } catch { d.key = '' } delete d.keyEnc }
     return s
   } catch { return {} }
 })
 ipcMain.on('settings:set', (_, s) => {
   const o = { ...s }
   if (o.key && safeStorage.isEncryptionAvailable()) { o.keyEnc = safeStorage.encryptString(o.key).toString('base64'); delete o.key }
+  if (o.dests && safeStorage.isEncryptionAvailable()) o.dests = o.dests.map(d => { if (!d.key) return d; const { key, ...r } = d; return { ...r, keyEnc: safeStorage.encryptString(key).toString('base64') } })
   try { writeFileSync(file(), JSON.stringify(o)) } catch {}
 })
 
@@ -156,9 +166,74 @@ ipcMain.handle('chat:send', async (_, text) => { // posts as the signed-in YouTu
   return true
 })
 
+// ---- annotation overlay: a see-through, always-on-top window over the whole display, so you can draw on any app ----
+let overlay
+const OVERLAY_KEY = 'CommandOrControl+Shift+D'
+function toggleOverlay() {
+  if (overlay && !overlay.isDestroyed()) { overlay.destroy(); overlay = null; return send('overlay:state', false) }
+  const d = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  overlay = new BrowserWindow({ ...d.bounds, frame: false, transparent: true, resizable: false, movable: false, hasShadow: false, skipTaskbar: true, fullscreenable: false, roundedCorners: false, enableLargerThanScreen: true,
+    webPreferences: { preload: join(__dirname, '../preload/index.js') } })
+  overlay.setAlwaysOnTop(true, 'screen-saver')
+  if (process.env.ELECTRON_RENDERER_URL) overlay.loadURL(process.env.ELECTRON_RENDERER_URL + '#overlay'); else overlay.loadFile(join(__dirname, '../renderer/index.html'), { hash: 'overlay' })
+  overlay.on('closed', () => { overlay = null; send('overlay:state', false) })
+  send('overlay:state', true)
+}
+ipcMain.on('overlay:toggle', toggleOverlay)
+// ---- recording editor: its own frameless window; "Record & edit" hands it the new recording ----
+let editorWin, editorStart = null
+ipcMain.on('editor:open', (_, start) => {
+  editorStart = start || null
+  if (editorWin && !editorWin.isDestroyed()) { if (start) editorWin.webContents.send('editor:start', start); editorWin.show(); editorWin.focus(); return }
+  editorWin = new BrowserWindow({ width: 1440, height: 880, minWidth: 980, minHeight: 620, frame: false, roundedCorners: true, backgroundColor: '#000000', title: 'Meroro Editor', show: false,
+    webPreferences: { preload: join(__dirname, '../preload/index.js'), backgroundThrottling: false } })
+  if (process.env.ELECTRON_RENDERER_URL) editorWin.loadURL(process.env.ELECTRON_RENDERER_URL + '#editor'); else editorWin.loadFile(join(__dirname, '../renderer/index.html'), { hash: 'editor' })
+  editorWin.once('ready-to-show', () => editorWin.show())
+  editorWin.on('closed', () => { editorWin = null })
+})
+// ---- reset everything: settings, profiles and downloaded caches go; recordings and exports stay ----
+ipcMain.handle('app:reset', async () => {
+  const ud = app.getPath('userData')
+  for (const f of ['settings.json']) try { unlinkSync(join(ud, f)) } catch {}
+  for (const d of ['profiles', 'gameart', 'appmeta', 'models']) try { (await import('node:fs')).rmSync(join(ud, d), { recursive: true, force: true }) } catch {}
+  globalShortcut.unregisterAll()
+  app.relaunch(); setTimeout(() => app.exit(0), 200)
+  return true
+})
+ipcMain.handle('editor:start', () => { const s = editorStart; editorStart = null; return s })
+ipcMain.on('win:close', ev => BrowserWindow.fromWebContents(ev.sender)?.close())
+ipcMain.on('win:max', ev => { const w = BrowserWindow.fromWebContents(ev.sender); if (w) w.isMaximized() ? w.unmaximize() : w.maximize() })
+const framesWin = () => BrowserWindow.getAllWindows().find(w => /All frames/.test(w.getTitle()))
+ipcMain.on('frames:top', (_, on) => framesWin()?.setAlwaysOnTop(!!on, 'floating'))
+ipcMain.on('studio:focus', () => { win?.show(); win?.focus() })
+ipcMain.on('overlay:ignore', (_, on) => { if (overlay && !overlay.isDestroyed()) overlay.setIgnoreMouseEvents(!!on, { forward: true }) })
+app.whenReady().then(() => { try { globalShortcut.register(OVERLAY_KEY, toggleOverlay) } catch {} })
+
+// ---- stream pointer: where the mouse is on which display (60 times a second) and whether the button is down ----
+let ptrTimer, ptrProc, ptrDown = false
+ipcMain.on('pointer:on', async (_, on) => {
+  clearInterval(ptrTimer); ptrTimer = null; ptrProc?.kill(); ptrProc = null; ptrDown = false
+  if (!on) return
+  const map = {}
+  try { for (const x of await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } })) map[x.display_id] = x.id } catch {}
+  try {
+    const helper = join(app.isPackaged ? join(process.resourcesPath, 'bin') : join(app.getAppPath(), 'bin', 'mac'), 'mousebtn')
+    ptrProc = mac ? (existsSync(helper) ? spawn(helper, [], { stdio: ['ignore', 'pipe', 'ignore'] }) : null)
+      : spawn('powershell', ['-NoProfile', '-Command', "Add-Type -Name U -Namespace W -MemberDefinition '[DllImport(\"user32.dll\")] public static extern short GetAsyncKeyState(int k);'; $l=$false; while($true){ $d=([W.U]::GetAsyncKeyState(1) -band 0x8000) -ne 0; if($d -ne $l){ $l=$d; if($d){'1'}else{'0'} }; Start-Sleep -Milliseconds 8 }"], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true })
+    ptrProc?.stdout.on('data', d => { ptrDown = String(d).trim().endsWith('1') })
+    ptrProc?.on('error', () => {})
+  } catch {}
+  ptrTimer = setInterval(() => {
+    const p = screen.getCursorScreenPoint(), d = screen.getDisplayNearestPoint(p), b = d.bounds
+    send('pointer', map[String(d.id)] || '', (p.x - b.x) / b.width, (p.y - b.y) / b.height, ptrDown)
+  }, 16)
+})
+app.on('will-quit', () => ptrProc?.kill())
+
 // ---- global hotkeys (soundboard, mute) ----
 ipcMain.handle('hotkeys:set', (_, list) => {
   globalShortcut.unregisterAll()
+  try { globalShortcut.register(OVERLAY_KEY, toggleOverlay) } catch {}
   const acc = k => k.replace(/^(Shift|Ctrl|Alt)\+/g, m => ({ 'Shift+': 'Shift+', 'Ctrl+': 'CommandOrControl+', 'Alt+': 'Alt+' })[m]).replace(/Key([A-Z])$/, '$1').replace(/Digit(\d)$/, '$1').replace(/Numpad(\d)$/, 'num$1')
   for (const { id, key } of list) { try { if (key && !/^(Mouse|Wheel|Pad)/.test(key)) globalShortcut.register(acc(key), () => send('hotkey', id)) } catch {} }
   return true
@@ -202,6 +277,8 @@ ipcMain.handle('clean:set', async (_, serial, on, o) => {
 })
 ipcMain.handle('app:info', (_, serial, pkg) => appInfo(serial, pkg))
 ipcMain.handle('app:action', (_, serial, pkg, act) => appAction(serial, pkg, act))
+// phone buttons from the shortcut bar (works even when the screen isn't being captured)
+ipcMain.handle('phone:key', (_, serial, k) => k === 'notifications' ? adb(['-s', serial, 'shell', 'cmd', 'statusbar', 'expand-notifications']) : adb(['-s', serial, 'shell', 'input', 'keyevent', String(+k)]))
 ipcMain.handle('device:shot', async (_, serial) => {
   const f = join(app.getPath('pictures'), `Meroro ${new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 19).replace(/[T:]/g, '-')}.png`)
   writeFileSync(f, await screenshot(serial))
@@ -226,6 +303,29 @@ ipcMain.handle('app:meta', async (_, pkg) => {
   try { mkdirSync(metaDir(), { recursive: true }); writeFileSync(f, JSON.stringify(meta)) } catch {}
   return meta
 })
+// ---- game posters for the Games library: Steam portrait art, Wikipedia cover art, or Play Store screenshots (fetched at run time, cached) ----
+const UA = { 'User-Agent': 'Meroro/1.0 (desktop streaming app)' }
+ipcMain.handle('game:art', async (_, g) => {
+  if (!/^[\w-]+$/.test(g.id)) return {}
+  const f = join(app.getPath('userData'), 'gameart', g.id + '.json')
+  try { return JSON.parse(readFileSync(f, 'utf8')) } catch {}
+  const art = {}, get = (u, o = {}) => fetch(u, { headers: UA, signal: AbortSignal.timeout(9000), ...o })
+  try {
+    if (g.steam) { const u = `https://cdn.cloudflare.steamstatic.com/steam/apps/${g.steam}/library_600x900.jpg`; if ((await get(u, { method: 'HEAD' })).ok) art.poster = u }
+    if (!art.poster && g.wiki) { const r = await get('https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(g.wiki)); if (r.ok) { const o = (await r.json()).originalimage; if (o && o.height > o.width * 1.1) art.poster = o.source } }
+    if (g.pkg) {
+      const r = await get(`https://play.google.com/store/apps/details?id=${g.pkg}&hl=en`)
+      if (r.ok) { const html = await r.text(), base = u => u.replace(/=[^=/]*$/, '')
+        const shot = [...html.matchAll(/<img[^>]*alt="Screenshot image"[^>]*>/g)].map(m => m[0].match(/src="([^"]+)"/)?.[1]).find(Boolean)
+        const icon = html.match(/<meta property="og:image" content="([^"]+)"/)?.[1]
+        // Play Store images refuse to load inside the app, so they are fetched here and handed over as data URLs
+        const data = async u => { const i = await get(u); return i.ok ? `data:${i.headers.get('content-type') || 'image/jpeg'};base64,` + Buffer.from(await i.arrayBuffer()).toString('base64') : undefined }
+        if (shot) art.bg = await data(base(shot) + '=w600-h740-rj'); if (icon) art.icon = await data(base(icon) + '=w128-h128') }
+    }
+  } catch { return art }
+  if (art.poster || art.bg) { try { mkdirSync(join(app.getPath('userData'), 'gameart'), { recursive: true }); writeFileSync(f, JSON.stringify(art)) } catch {} }
+  return art
+})
 ipcMain.handle('session:start', async (_, serial, o) => {
   session?.stop()
   const s = session = new Session(serial, o, (type, p) => {
@@ -240,16 +340,25 @@ ipcMain.on('ctl', (_, m) => session?.control(m))
 let rtmps
 const hasRtmps = () => rtmps ??= new Promise(r => execFile(FFMPEG, ['-hide_banner', '-protocols'], (e, out) => r(/\brtmps\b/.test(out || ''))))
 
-ipcMain.handle('out:start', async (_, id, o) => {
+ipcMain.handle('out:start', async (ev, id, o) => {
+  const to = ev.sender, tell = (ch, ...a) => { if (!to.isDestroyed()) to.send(ch, ...a) }
   if (outs.has(id)) return
   const args = ['-hide_banner', '-loglevel', 'warning', '-stats', '-stats_period', '1', '-fflags', '+genpts', '-i', 'pipe:0']
   let target, secret = ''
   if (id === 'rec') {
     target = join(app.getPath('videos'), `Meroro ${new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 19).replace(/[T:]/g, '-')}.mkv`)
     args.push('-c', 'copy', target)
+  } else if (id === 'export') { // editor export: MP4 by quality, or GIF with its own palette
+    target = o.file
+    if (o.fmt === 'gif') args.push('-an', '-vf', `fps=${o.gifFps || 15},scale=${o.gifSize || 720}:-2:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4`, '-loop', o.gifLoop === false ? '-1' : '0', '-y', target)
+    else args.push('-c:v', 'libx264', '-preset', 'medium', '-crf', String({ low: 28, medium: 23, high: 18, best: 14 }[o.quality] || 18), '-pix_fmt', 'yuv420p', '-r', String(o.fps || 60), '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', '-y', target)
   } else {
     secret = o.key
-    const base = o.dest === 'youtube' ? (await hasRtmps() ? 'rtmps://a.rtmps.youtube.com:443/live2' : 'rtmp://a.rtmp.youtube.com/live2') : o.url.replace(/\/$/, '')
+    const tls = await hasRtmps()
+    let base = (o.url || '').trim().replace(/\/$/, '')
+    if (o.dest === 'youtube' && (!base || /youtube\.com/.test(base))) base = tls ? 'rtmps://a.rtmps.youtube.com:443/live2' : 'rtmp://a.rtmp.youtube.com/live2'
+    else if (/^rtmps:/.test(base) && !tls) { if (o.rtmp) base = o.rtmp; else throw new Error('This platform needs RTMPS, which this ffmpeg build does not support.') }
+    if (!/^rtmps?:\/\//.test(base)) throw new Error('Enter the RTMP server URL (rtmp://…) for this destination.')
     target = `${base}/${o.key}`
     const k = o.bitrate + 'k'
     const enc = o.encoder === 'hw' && mac
@@ -264,7 +373,7 @@ ipcMain.handle('out:start', async (_, id, o) => {
   p.stderr.on('data', d => {
     const t = String(d)
     const m = t.match(/frame=\s*(\d+)\s+fps=\s*([\d.]+).*?time=([\d:.]+)\s+bitrate=\s*([\d.]+)kbits.*?speed=\s*([\d.]+)x/s)
-    if (m) send('out:stats', id, { frames: +m[1], fps: +m[2], time: m[3], kbps: +m[4], speed: +m[5], drop: +(t.match(/drop=\s*(\d+)/)?.[1] || 0) })
+    if (m) tell('out:stats', id, { frames: +m[1], fps: +m[2], time: m[3], kbps: +m[4], speed: +m[5], drop: +(t.match(/drop=\s*(\d+)/)?.[1] || 0) })
     else last = (last + t).slice(-600)
   })
   p.on('error', e => { last = e.message })
@@ -272,7 +381,7 @@ ipcMain.handle('out:start', async (_, id, o) => {
     outs.delete(id)
     if (!outs.size && blocker != null) { powerSaveBlocker.stop(blocker); blocker = null }
     const error = code ? (secret ? last.split(secret).join('•••') : last).trim().split('\n').slice(-3).join('\n') || `ffmpeg exited (${code})` : null
-    send('out:end', id, { error, file: id === 'rec' ? target : null })
+    tell('out:end', id, { error, file: id === 'rec' || id === 'export' ? target : null })
   })
   outs.set(id, p)
   blocker ??= powerSaveBlocker.start('prevent-app-suspension')
@@ -286,12 +395,81 @@ ipcMain.on('out:stop', (_, id) => {
 })
 
 // ---- scene sources: files, screen/window capture, offscreen web pages ----
-ipcMain.handle('file:pick', async (_, kind, many) => {
-  const filters = [kind === 'lut' ? { name: 'LUT', extensions: ['cube'] } : kind === 'image' ? { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] } : kind === 'audio' ? { name: 'Audio', extensions: ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'] } : { name: 'Videos', extensions: ['mp4', 'webm', 'mov', 'm4v'] }]
-  const r = (await dialog.showOpenDialog(win, { properties: many ? ['openFile', 'multiSelections'] : ['openFile'], filters })).filePaths
+ipcMain.handle('file:pick', async (ev, kind, many) => {
+  const filters = [kind === 'lut' ? { name: 'LUT', extensions: ['cube'] } : kind === 'image' ? { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] } : kind === 'audio' ? { name: 'Audio', extensions: ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'] } : { name: 'Videos', extensions: ['mp4', 'webm', 'mov', 'm4v', 'mkv'] }]
+  const r = (await dialog.showOpenDialog(BrowserWindow.fromWebContents(ev.sender) || win, { properties: many ? ['openFile', 'multiSelections'] : ['openFile'], filters })).filePaths
   return many ? r : r[0] || ''
 })
 ipcMain.handle('file:read', (_, p) => readFile(p))
+// ---- caption speech models: download the zip from the Vosk site once, repack as .tar.gz (what the in-app engine reads) ----
+const modelDir = () => { const d = join(app.getPath('userData'), 'models'); mkdirSync(d, { recursive: true }); return d }
+const modelJobs = new Map()
+ipcMain.handle('captions:model', (_, name) => {
+  if (!/^vosk-model-[\w.-]+$/.test(name)) throw new Error('Unknown speech model')
+  const tgz = join(modelDir(), name + '.tar.gz'), url = `meroro://models/${name}.tar.gz`
+  if (existsSync(tgz)) return url
+  if (!modelJobs.has(name)) modelJobs.set(name, (async () => {
+    const zip = join(modelDir(), name + '.zip'), r = await fetch(`https://alphacephei.com/vosk/models/${name}.zip`)
+    if (!r.ok) throw new Error('Could not download the speech model (' + r.status + ')')
+    const total = +r.headers.get('content-length') || 0, parts = []; let got = 0
+    for await (const c of r.body) { parts.push(c); got += c.length; if (total) send('captions:progress', Math.round(100 * got / total)) }
+    writeFileSync(zip, Buffer.concat(parts))
+    await new Promise((res, rej) => execFile('tar', ['-czf', tgz + '.part', '@' + zip], { windowsHide: true }, e => e ? rej(new Error('Could not unpack the speech model')) : res()))
+    renameSync(tgz + '.part', tgz); try { unlinkSync(zip) } catch {}
+    return url
+  })().finally(() => modelJobs.delete(name)))
+  return modelJobs.get(name)
+})
+// meroro://media/<n> streams a recording or webcam file to the editor with byte ranges (seeking in long videos without loading them whole)
+const mediaFiles = []
+ipcMain.handle('media:url', (_, p) => { let i = mediaFiles.indexOf(p); if (i < 0) i = mediaFiles.push(p) - 1; return `meroro://media/${i}` })
+app.whenReady().then(() => protocol.handle('meroro', async req => {
+  const u = new URL(req.url), name = decodeURIComponent(u.pathname).replace(/^\/+/, '')
+  if (u.host === 'media') {
+    const f = mediaFiles[+name]
+    if (!f || !existsSync(f)) return new Response('', { status: 404 })
+    const size = statSync(f).size, m = /bytes=(\d*)-(\d*)/.exec(req.headers.get('range') || '')
+    const start = m && m[1] ? +m[1] : 0, end = m && m[2] ? Math.min(+m[2], size - 1) : size - 1
+    const type = /\.(mp3|wav|m4a|aac|ogg|flac)$/i.test(f) ? 'audio/mpeg' : /\.webm$/i.test(f) ? 'video/webm' : /\.mkv$/i.test(f) ? 'video/x-matroska' : 'video/mp4'
+    return new Response(Readable.toWeb(createReadStream(f, { start, end })), { status: m ? 206 : 200, headers: { 'content-type': type, 'accept-ranges': 'bytes', 'content-length': String(end - start + 1),
+      ...(m ? { 'content-range': `bytes ${start}-${end}/${size}` } : {}), 'access-control-allow-origin': '*' } })
+  }
+  const f = join(modelDir(), name.replace(/[^\w.-]/g, ''))
+  try { return new Response(await readFile(f), { headers: { 'content-type': 'application/gzip', 'access-control-allow-origin': '*' } }) } catch { return new Response('', { status: 404 }) }
+}))
+// ---- recording editor: project files and export ----
+ipcMain.handle('project:save', async (ev, path, json, name) => {
+  if (!path) { const r = await dialog.showSaveDialog(BrowserWindow.fromWebContents(ev.sender) || win, { defaultPath: (name || 'Recording') + '.meroro-edit', filters: [{ name: 'Meroro edit project', extensions: ['meroro-edit'] }] }); if (r.canceled) return ''; path = r.filePath }
+  writeFileSync(path, json); return path
+})
+ipcMain.handle('project:open', async ev => {
+  const f = (await dialog.showOpenDialog(BrowserWindow.fromWebContents(ev.sender) || win, { properties: ['openFile'], filters: [{ name: 'Recording or project', extensions: ['meroro-edit', 'mkv', 'mp4', 'mov', 'webm'] }] })).filePaths[0]
+  if (!f) return null
+  return /\.meroro-edit$/i.test(f) ? { path: f, project: JSON.parse(readFileSync(f, 'utf8')) } : { video: f }
+})
+ipcMain.handle('export:pick', async (ev, name, ext) => { const r = await dialog.showSaveDialog(BrowserWindow.fromWebContents(ev.sender) || win, { defaultPath: join(app.getPath('videos'), name + '.' + ext), filters: [{ name: ext.toUpperCase(), extensions: [ext] }] }); return r.canceled ? '' : r.filePath })
+ipcMain.handle('recordings', () => { try { const d = app.getPath('videos'); return readdirSync(d).filter(f => /^Meroro .*\.mkv$/.test(f)).map(f => ({ file: join(d, f), name: f, at: statSync(join(d, f)).mtimeMs, size: statSync(join(d, f)).size })).sort((a, b) => b.at - a.at).slice(0, 12) } catch { return [] } })
+// ---- setting profiles: saved in userData/profiles, exported/imported as .meroro.json ----
+const profDir = () => { const d = join(app.getPath('userData'), 'profiles'); mkdirSync(d, { recursive: true }); return d }
+const profFile = name => join(profDir(), name.replace(/[^\w\- ]+/g, '_').slice(0, 60) + '.json')
+ipcMain.handle('profile:list', () => readdirSync(profDir()).filter(f => f.endsWith('.json')).map(f => {
+  try { const j = JSON.parse(readFileSync(join(profDir(), f), 'utf8')); return { name: j.name, saved: j.saved, scenes: j.settings?.scenes?.length || 0 } } catch { return null }
+}).filter(Boolean).sort((a, b) => b.saved - a.saved))
+ipcMain.handle('profile:save', (_, name, settings) => { writeFileSync(profFile(name), JSON.stringify({ meroro: 1, name, saved: Date.now(), settings })); return true })
+ipcMain.handle('profile:load', (_, name) => JSON.parse(readFileSync(profFile(name), 'utf8')).settings)
+ipcMain.handle('profile:delete', (_, name) => { try { unlinkSync(profFile(name)) } catch {} return true })
+ipcMain.handle('profile:export', async (_, name, settings) => {
+  const r = await dialog.showSaveDialog(win, { defaultPath: name.replace(/[^\w\- ]+/g, '_') + '.meroro.json', filters: [{ name: 'Meroro profile', extensions: ['json'] }] })
+  if (r.canceled || !r.filePath) return ''
+  writeFileSync(r.filePath, JSON.stringify({ meroro: 1, name, saved: Date.now(), settings }, null, 1)); return r.filePath
+})
+ipcMain.handle('profile:import', async () => {
+  const f = (await dialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: 'Meroro profile', extensions: ['json'] }] })).filePaths[0]
+  if (!f) return null
+  const j = JSON.parse(readFileSync(f, 'utf8'))
+  if (!j.settings || typeof j.settings !== 'object') throw new Error('This is not a Meroro profile file')
+  return { name: j.name || 'Imported', settings: j.settings }
+})
 let pickId = ''
 ipcMain.handle('screen:list', async () => (await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } })).map(x => [x.id, x.name]))
 ipcMain.handle('screen:pick', (_, id) => { pickId = id })

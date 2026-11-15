@@ -14,8 +14,7 @@ function Graph({ hist, max }) {
   </svg>
 }
 
-export default function StreamPlus({ s, set, hist, live, game, busy }) {
-  const o2 = { on: false, sceneId: '', size: '1080x1920', dest: 'youtube', key: '', url: '', bitrate: 6000, ...s.out2 }, up2 = p => set({ out2: { ...o2, ...p } })
+export default function StreamPlus({ s, set, hist, live, game, busy, xst = {} }) {
   const c = hist.at(-1), drops = c ? c.drop - (hist.at(-30)?.drop || 0) : 0, bad = c && (c.speed < 0.95 || drops > 10)
   const title = titleFor(s, game)
   return <>
@@ -31,23 +30,13 @@ export default function StreamPlus({ s, set, hist, live, game, busy }) {
       <Row label="Auto-reconnect"><Switch checked={s.reconnect !== false} onChange={reconnect => set({ reconnect })} /></Row>
       <Row label="Auto bitrate"><Switch checked={!!s.autoBitrate} onChange={autoBitrate => set({ autoBitrate })} /></Row>
     </Section>
-    <Section icon={RectangleVertical} title="Second output" right={<Switch checked={o2.on} onChange={on => up2({ on })} />}>
-      {o2.on && <>
-        <Row label="Scene"><Select className="flex-1" value={o2.sceneId} onChange={sceneId => up2({ sceneId })} options={[['', 'Choose a scene…'], ...s.scenes.map(x => [x.id, x.name])]} /></Row>
-        <Row label="Size"><Select className="flex-1" disabled={busy} value={o2.size} onChange={size => up2({ size })} options={[['1080x1920', 'Vertical 1080×1920'], ['720x1280', 'Vertical 720×1280'], ['1080x1350', 'Portrait 4:5'], ['1080x1080', 'Square'], ['1920x1080', 'Horizontal 1080p']]} /></Row>
-        <Row label="Send to"><Select className="flex-1" disabled={busy} value={o2.dest} onChange={dest => up2({ dest })} options={[['youtube', 'YouTube (another key)'], ['custom', 'Custom RTMP (TikTok, Instagram…)']]} /></Row>
-        {o2.dest === 'custom' && <Row label="Server"><Input disabled={busy} value={o2.url} onChange={e => up2({ url: e.target.value })} placeholder="rtmp://…" /></Row>}
-        <Row label="Stream key"><Input disabled={busy} type="password" value={o2.key} onChange={e => up2({ key: e.target.value })} placeholder="key for the second stream" /></Row>
-        <Row label="Bitrate"><Select className="flex-1" disabled={busy} value={o2.bitrate} onChange={bitrate => up2({ bitrate: +bitrate })} options={[[3000, '3000 kbps'], [4500, '4500 kbps'], [6000, '6000 kbps']]} /></Row>
-      </>}
-    </Section>
     <Section icon={Type} title="Stream title">
       <Row label="Template"><Input value={s.titleTpl || '{game} live 🔴 | {date}'} onChange={e => set({ titleTpl: e.target.value })} /></Row>
       <div className="rounded-lg bg-black/25 px-2 py-1.5 text-[12px] text-zinc-200 truncate" title={title}>{title}</div>
       <Row label="Copy on game change"><Switch checked={!!s.autoTitle} onChange={autoTitle => set({ autoTitle })} /></Row>
       <div className="grid grid-cols-2 gap-1">
         <Button className="h-8" onClick={() => navigator.clipboard.writeText(title)}><Copy size={12} />Copy title</Button>
-        <Button className="h-8" onClick={() => { navigator.clipboard.writeText(title); s.dest === 'custom' && /twitch/.test(s.customUrl) ? window.open('https://dashboard.twitch.tv/stream-manager') : api.invoke('yt:studio') }}><ExternalLink size={12} />Edit on {s.dest === 'custom' && /twitch/.test(s.customUrl) ? 'Twitch' : 'YouTube'}</Button>
+        <Button className="h-8" onClick={() => { navigator.clipboard.writeText(title); s.dest === 'twitch' ? window.open('https://dashboard.twitch.tv/stream-manager') : api.invoke('yt:studio') }}><ExternalLink size={12} />Edit on {s.dest === 'twitch' ? 'Twitch' : 'YouTube'}</Button>
       </div>
     </Section>
   </>

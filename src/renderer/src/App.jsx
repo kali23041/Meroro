@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  SlidersVertical, GripHorizontal, MessageSquare, Music, Bell, Wand2, LayoutDashboard, Sparkles, Zap, Gamepad2, Smartphone, Wifi, Usb, Radio, Circle, Square, Mic, Volume2, Headphones, Camera, Layers, ChevronLeft, Search,
-  AppWindow, ShieldCheck, ExternalLink, Info, X, Eye, EyeOff, RefreshCw, MousePointerClick, FolderOpen
+  SlidersVertical, Settings2, Film, GripHorizontal, MessageSquare, Music, Bell, Wand2, LayoutDashboard, Sparkles, Zap, Gamepad2, Smartphone, Wifi, Usb, Radio, Circle, Square, Mic, Volume2, Headphones, Camera, Layers, ChevronLeft, Search,
+  AppWindow, ShieldCheck, ExternalLink, Info, X, Eye, EyeOff, RefreshCw, MousePointerClick, FolderOpen,
+  BellDot, ChevronRight, House, LayoutGrid, MicOff, Power, Undo2, Volume1
 } from 'lucide-react'
 import { Engine } from './engine'
 import Panel from './Panel'
@@ -22,6 +23,16 @@ import Device from './Device'
 import Wireless from './Wireless'
 import { AutoPanel, ChatBox, Quick } from './Pages'
 import HeaderBar from './HeaderBar'
+import Manager from './Manager'
+import { SideBySide } from './Frames'
+import { migrateFrames, frameSync } from './framemodel'
+import Mixer from './Mixer'
+import { SFX, SFX_FOR } from './sfx'
+import Editor from './Editor'
+import Annotate from './Annotate'
+import StreamTabs, { GoLiveBar } from './StreamTabs'
+import { platform, destOut } from './platforms'
+import Settings from './Settings'
 import PresetPicker from './PresetPicker'
 import Keys, { KeyHints } from './Keys'
 import { KEYMAPS, MAP_DEFAULTS, Mapper, combo, matchTrigger } from './keymap'
@@ -126,18 +137,43 @@ export default function App() {
   const [perm, setPerm] = useState(false)
   const [about, setAbout] = useState(false)
   const [view, setView] = useState('studio'), [side, setSide] = useState('scene'), [games, setGames] = useState(false), [adding, setAdding] = useState(null), [srcDlg, setSrcDlg] = useState(null), [sceneDlg, setSceneDlg] = useState(null), [rtab, setRtab] = useState('props'), [picker, setPicker] = useState(false)
+  const [editStart, setEditStart] = useState(null), trackRef = useRef({ pts: [], t0: 0, edit: false })
+  const [overlayOn, setOverlayOn] = useState(false), [sbs, setSbs] = useState(false), [mgr, setMgr] = useState(false)
+  useEffect(() => { if (!saved) return; const n = frameSync(saved); if (n !== saved) setS(n) }, [saved])
+  useEffect(() => api.on('overlay:state', setOverlayOn), [])
+  useEffect(() => api.on('pointer', (...a) => eng.current?.setPtr(...a)), [])
+  const [fxTab, setFxTab] = useState(''), [annot, setAnnot] = useState(false)
   const canvas = useRef(), eng = useRef(), down = useRef(false), drag = useRef(null)
   const s = saved || DEF
   const sRef = useRef()
   sRef.current = s
   const [chat, setChat] = useState([]), [chatSt, setChatSt] = useState({})
   const set = p => setS(o => ({ ...o, ...p }))
+  // ---- undo / redo (Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z or Ctrl+Y): snapshots of the settings, quick changes grouped ----
+  const undoH = useRef({ past: [], future: [], last: null, t: 0, skip: false })
+  useEffect(() => {
+    const h = undoH.current
+    if (!saved) return
+    if (h.skip) { h.skip = false; h.last = saved; return }
+    if (h.last && h.last !== saved) { if (Date.now() - h.t > 600) { h.past.push(h.last); if (h.past.length > 100) h.past.shift() } h.future = [] }
+    h.last = saved; h.t = Date.now()
+  }, [saved])
+  const travel = back => { const h = undoH.current, from = back ? h.past : h.future, to = back ? h.future : h.past; if (!from.length) return; to.push(h.last); h.skip = true; h.t = 0; setS(from.pop()); setNote({ text: back ? 'Undone' : 'Redone' }) }
+  useEffect(() => {
+    const k = e => {
+      if (!(e.metaKey || e.ctrlKey) || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName) || e.target.isContentEditable || document.querySelector('[data-annotating]')) return
+      const key = e.key.toLowerCase()
+      if (key === 'z') { e.preventDefault(); travel(!e.shiftKey) } else if (key === 'y') { e.preventDefault(); travel(false) }
+    }
+    addEventListener('keydown', k); return () => removeEventListener('keydown', k)
+  }, [])
   const fail = e => setNote({ text: clean(e), bad: true })
 
   useEffect(() => {
     const e = eng.current = window.__eng = new Engine(canvas.current)
     e.onError = fail
-    api.invoke('settings:get').then(v => { const n = { ...DEF, ...v }; if (!n.scenes?.length) n.scenes = DEF.scenes; n.keymaps = { ...KEYMAPS, ...v.keymaps }; if (!n.scenes.some(x => x.id === n.sceneId)) n.sceneId = n.scenes[0].id; setS(n) })
+    e.onMicFix = (id, r) => !r.lost && setS(o => ({ ...o, mics: (o.mics || []).map(m => m.id === id ? { ...m, device: r.id, label: r.label } : m) }))
+    api.invoke('settings:get').then(v => { let n = { ...DEF, ...v }; if (!n.dests && v.out2?.key) n.dests = [{ id: 'out2', on: !!v.out2.on, name: 'Second output', platform: v.out2.dest === 'custom' ? 'custom' : 'youtube', url: v.out2.url || '', key: v.out2.key, sceneId: v.out2.sceneId || '', size: v.out2.size || '1080x1920', bitrate: v.out2.bitrate || 6000 }]; delete n.out2; if (!n.scenes?.length) n.scenes = DEF.scenes; n.keymaps = { ...KEYMAPS, ...v.keymaps }; if (!n.scenes.some(x => x.id === n.sceneId)) n.sceneId = n.scenes[0].id; setS(migrateFrames(n)) })
     const refresh = e.refreshMedia = async () => {
       const d = await navigator.mediaDevices.enumerateDevices()
       const pick = kind => d.filter(x => x.kind === kind && x.label && x.deviceId !== 'default').map(x => [x.deviceId, x.label])
@@ -163,12 +199,14 @@ export default function App() {
       }),
       api.on('session:log', l => /WARN|ERROR|unavailable/.test(l) && setNote({ text: l.replace(/^\[server\]\s*/, '') })),
       api.on('session:end', err => { e.clear(); setCap('idle'); if (err) setNote({ text: err, bad: true }) }),
-      api.on('out:stats', (id, st) => { if (id === 'live') { setStats(st); setLive('on'); setHist(h => [...h.slice(-59), st]); hot.current.stat(st) } else if (id === 'rec') setRec(st.time.slice(0, 8)) }),
+      api.on('out:stats', (id, st) => { if (id.startsWith('x:')) setXst(o => ({ ...o, [id.slice(2)]: { state: 'on', kbps: Math.round(st.kbps), fps: st.fps } })); else if (id === 'live') { setStats(st); setLive('on'); setHist(h => [...h.slice(-59), st]); hot.current.stat(st) } else if (id === 'rec') setRec(st.time.slice(0, 8)) }),
       api.on('out:end', (id, r) => {
         e.stopOutput(id)
-        if (id === 'live2') return r.error && setNote({ text: 'Second output: ' + r.error, bad: true })
+        if (id === 'export') return dispatchEvent(new CustomEvent('export-end', { detail: r }))
+        if (id.startsWith('x:')) return hot.current.xend(id.slice(2), r)
+        if (id === 'rec') hot.current.recEnd(r)
         if (id === 'live' && hot.current.again(r)) return // reconnecting or changing bitrate
-        if (id === 'live') { setLive(null); setStats(null); setHist([]); e.stopOutput('live2'); hot.current.fire('end') } else setRec(null)
+        if (id === 'live') { setLive(null); setStats(null); setHist([]); hot.current.xstop(); hot.current.fire('end') } else setRec(null)
         if (r.error) setNote({ text: r.error, bad: true })
         else if (r.file) setNote({ text: 'Recording saved to Movies', file: r.file })
       })
@@ -183,7 +221,11 @@ export default function App() {
     const t = setTimeout(() => api.send('settings:set', s), 400)
     return () => clearTimeout(t)
   }, [saved, guarding])
-  useEffect(() => { saved && eng.current.setMic(s.mic).then(eng.current.refreshMedia).catch(e => { fail(e); set({ mic: '' }) }) }, [s.mic, !saved])
+  useEffect(() => { saved && eng.current.setMic(s.mic, s.micLabel).then(r => { eng.current.refreshMedia()
+    if (!r) return
+    if (r.lost) setNote({ text: `Your saved microphone${s.micLabel ? ` (${s.micLabel})` : ''} isn't connected, so the default mic is used.`, bad: true })
+    else if (r.id !== s.mic || r.label !== (s.micLabel || '')) set({ mic: r.id, micLabel: r.label }) // found again by its name
+  }).catch(e => setNote({ text: `Couldn't open the microphone (${clean(e)}). Pick another device in its settings.`, bad: true })) }, [s.mic, !saved])
 
   const dev = devices.find(d => d.serial === serial)
   const ready = dev?.state === 'device'
@@ -191,6 +233,11 @@ export default function App() {
   const [appsErr, setAppsErr] = useState('')
   const loadApps = () => { setApps(null); setAppsErr(''); if (ready) api.invoke('apps', serial).then(setApps).catch(e => { setApps([]); setAppsErr(clean(e)) }) }
   useEffect(loadApps, [serial, ready])
+  useEffect(() => { // phone plugged in but the app list came back empty or failed: keep retrying until it loads
+    if (!ready || (apps && apps.length && !appsErr)) return
+    let n = 0; const t = setInterval(() => { if (++n > 15) return clearInterval(t); api.invoke('apps', serial).then(a => { if (a?.length) { setApps(a); setAppsErr(''); clearInterval(t) } }).catch(() => {}) }, 4000)
+    return () => clearInterval(t)
+  }, [ready, serial, apps?.length, appsErr])
   const meta = useMeta(apps)
 
   // Watch which app is in front on the phone (drives "On phone now" and the privacy cover).
@@ -217,7 +264,7 @@ export default function App() {
 
   // Hotkeys: Cmd/Ctrl+1..9 switch scenes, Cmd/Ctrl+R toggles recording.
   const hot = useRef()
-  hot.current = { record: () => record(), fire: (...a) => fire(...a), stat: st => liveStat(st), again: r => liveAgain(r), chat: m => chatExtras(m) } // lazy: both are declared further down
+  hot.current = { record: () => record(), fire: (...a) => fire(...a), xend: (...a) => xEnd(...a), recEnd: r => recEnd(r), xstop: () => xStop(), stat: st => liveStat(st), again: r => liveAgain(r), chat: m => chatExtras(m) } // lazy: both are declared further down
   useEffect(() => {
     const h = e => {
       if (!(e.metaKey || e.ctrlKey) || e.target.tagName === 'INPUT') return
@@ -242,22 +289,90 @@ export default function App() {
     } catch (e) { setCap('idle'); fail(e) }
   }
   const source = p => { const n = { ...s, ...p }; setS(n); if (cap === 'on') start(n) } // source changes restart a running capture
+  // A phone that is plugged in after a preset (or scene) needed it: start capturing by itself, once per connection.
+  const autoCap = useRef('')
+  useEffect(() => {
+    if (!ready) { autoCap.current = ''; return }
+    const sc = s.scenes.find(x => x.id === s.sceneId), wants = sc?.layers.some(l => l.type === 'phone' && l.visible !== false)
+    if (wants && cap === 'idle' && autoCap.current !== serial) { autoCap.current = serial; setTimeout(() => start(sRef.current), 600) }
+  }, [ready, serial, s.sceneId, cap])
+  // Microphones are sources too: adding one puts a Microphone source in the current scene; removing its last source removes the mic.
+  const addMicSource = (device, name = '') => setS(o => {
+    const nm = name.replace(/\s*\(.*\)$/, '') || 'Microphone', n = { ...o }; let micId = 'main'
+    if (!o.mic) n.mic = device; else { micId = Math.random().toString(36).slice(2, 9); n.mics = [...(o.mics || []), { id: micId, device, name: nm, vol: 1 }] }
+    const lay = { ...newLayer('mic'), name: nm, micId, device }; setSel(lay.id)
+    n.scenes = o.scenes.map(sc => sc.id !== o.sceneId ? sc : { ...sc, layers: [...sc.layers, lay] }); return n
+  })
+  const micSeen = useRef(null)
+  useEffect(() => {
+    if (!saved) return
+    const ids = new Set(saved.scenes.flatMap(sc => sc.layers.filter(l => l.type === 'mic').map(l => l.micId)))
+    const have = [...(saved.mic ? ['main'] : []), ...(saved.mics || []).map(m => m.id)], prev = micSeen.current; micSeen.current = ids
+    const gone = prev ? have.filter(id => prev.has(id) && !ids.has(id)) : [], missing = have.filter(id => !ids.has(id) && !gone.includes(id))
+    const orphan = [...ids].filter(id => !have.includes(id)) // a Microphone source whose mic was lost: bring the mic back
+    if (!gone.length && !missing.length && !orphan.length) return
+    const lay = id => saved.scenes.flatMap(sc => sc.layers).find(l => l.type === 'mic' && l.micId === id)
+    setS(o => ({ ...o, ...(gone.includes('main') ? { mic: '' } : orphan.includes('main') ? { mic: lay('main')?.device || 'default' } : {}),
+      mics: [...(o.mics || []).filter(m => !gone.includes(m.id)), ...orphan.filter(id => id !== 'main').map(id => ({ id, device: lay(id)?.device || 'default', name: lay(id)?.name || 'Microphone', vol: 1 }))],
+      scenes: missing.length ? o.scenes.map(sc => sc.id !== o.sceneId ? sc : { ...sc, layers: [...sc.layers, ...missing.map(id => ({ ...newLayer('mic'), name: id === 'main' ? 'Microphone' : o.mics?.find(m => m.id === id)?.name || 'Microphone', micId: id }))] }) : o.scenes }))
+  }, [saved])
+  // Landscape lock: when a locked phone source turns upright, switch to the chosen scene (or cover the phone); switch back when it turns sideways.
+  const landLock = useRef(null)
+  useEffect(() => {
+    const id = setInterval(() => {
+      const e = eng.current, S = sRef.current; let w = 0, h = 0
+      try { w = e?.frame?.displayWidth || 0; h = e?.frame?.displayHeight || 0 } catch {}
+      if (!w || !h) return
+      const upright = h > w * 1.05, lk = landLock.current
+      if (upright && !lk) {
+        const cur = S.scenes.find(x => x.id === S.sceneId), l = cur?.layers.find(x => x.type === 'phone' && x.landLock && x.visible !== false)
+        if (!l) return
+        if (l.landScene && S.scenes.some(x => x.id === l.landScene)) { landLock.current = { from: S.sceneId, to: l.landScene }; set({ sceneId: l.landScene }) }
+        else if (!S.cover) { landLock.current = { cover: true }; set({ cover: true }) }
+      } else if (!upright && lk) {
+        landLock.current = null
+        if (lk.cover) { if (S.cover) set({ cover: false }) } else if (S.sceneId === lk.to && S.scenes.some(x => x.id === lk.from)) set({ sceneId: lk.from })
+      }
+    }, 400)
+    return () => clearInterval(id)
+  }, [])
+  const restartCap = async () => { await api.invoke('session:stop').catch(() => {}); setCap('idle'); setTimeout(() => start(sRef.current), 400) }
+  const refreshPhone = () => { api.invoke('devices').then(setDevices).catch(() => {}); loadApps() }
 
   // ---- outputs ----
   const [hist, setHist] = useState([])
   const want = useRef(false), br = useRef(0), restart = useRef(false), slow = useRef(0), fine = useRef(0)
+  // ---- simultaneous streams: every enabled destination gets its own encoder, and its own canvas if it has its own scene or size ----
+  const [xst, setXst] = useState({})
+  const xStart = d => {
+    const id = 'x:' + d.id
+    if (eng.current.recs[id] || !d.on || !d.key) return
+    setXst(o => ({ ...o, [d.id]: { state: 'starting' } }))
+    eng.current.startOutput(id, destOut(d, sRef.current)).catch(e => { setXst(o => ({ ...o, [d.id]: { state: 'error', error: clean(e) } })); setNote({ text: `${d.name || platform(d.platform).name}: ${clean(e)}`, bad: true }) })
+  }
+  const xStop = () => { for (const k of Object.keys(eng.current.recs)) if (k.startsWith('x:')) eng.current.stopOutput(k); setXst({}) }
+  const xEnd = (id, r) => { // one destination dropped: the others keep going, this one retries
+    const d = (sRef.current.dests || []).find(x => x.id === id)
+    if (!want.current || !d) return setXst(o => { const n = { ...o }; delete n[id]; return n })
+    if (r.error) setNote({ text: `${d.name || platform(d.platform).name}: ${r.error.split('\n').pop()}`, bad: true })
+    if (sRef.current.reconnect === false) return setXst(o => ({ ...o, [id]: { state: 'error', error: r.error } }))
+    setXst(o => ({ ...o, [id]: { state: 'retry' } }))
+    setTimeout(() => { const n = (sRef.current.dests || []).find(x => x.id === id); if (want.current && n) xStart(n) }, 4000)
+  }
   const startLive = async bitrate => {
-    await eng.current.startOutput('live', { dest: s.dest, key: s.key.trim(), url: s.customUrl.trim(), bitrate, fps: +s.fps, encoder: s.encoder })
-    const o2 = s.out2
-    if (o2?.on && o2.key && o2.sceneId && !eng.current.recs.live2) eng.current.startOutput('live2', { dest: o2.dest, key: o2.key.trim(), url: (o2.url || '').trim(), bitrate: +o2.bitrate || 6000, fps: +s.fps, encoder: s.encoder }).catch(e => setNote({ text: 'Second output: ' + clean(e), bad: true }))
+    const p = platform(s.dest)
+    await eng.current.startOutput('live', { ...destOut({ platform: s.dest, url: p.ask ? s.customUrl : '', key: s.key, frameId: s.liveFrame || '' }, s), bitrate })
+    for (const d of s.dests || []) xStart(d)
   }
   const goLive = async () => {
-    if (live) { want.current = false; eng.current.stopOutput('live2'); return eng.current.stopOutput('live') }
-    if (!s.key) return setNote({ text: 'Paste your stream key first — YouTube Studio → Go live → Stream.', bad: true })
-    if (s.dest === 'custom' && !/^rtmps?:\/\//.test(s.customUrl)) return setNote({ text: 'Enter the RTMP server URL (rtmp://…).', bad: true })
+    const mainOn = s.mainOn !== false, extra = (s.dests || []).filter(d => d.on && d.key)
+    if (live) { want.current = false; xStop(); if (eng.current.recs.live) return eng.current.stopOutput('live'); setLive(null); return }
+    if (!mainOn) { if (!extra.length) return setNote({ text: 'Turn on at least one platform (gear on Go Live).', bad: true }); want.current = true; setNote(null); extra.forEach(xStart); setLive('on'); fire('live'); return }
+    if (!s.key) return setNote({ text: `Paste your ${platform(s.dest).name} stream key first (Stream tab).`, bad: true })
+    if (platform(s.dest).ask && !/^rtmps?:\/\//.test(s.customUrl)) return setNote({ text: 'Enter the RTMP server URL (rtmp://…).', bad: true })
     setNote(null); setLive('starting'); want.current = true; br.current = +s.bitrate
     try { await startLive(br.current); fire('live') }
-    catch (e) { want.current = false; setLive(null); fail(e) }
+    catch (e) { want.current = false; setLive(null); xStop(); fail(e) }
   }
   const liveAgain = r => { // called when ffmpeg ends: restart for a bitrate change, or reconnect after a drop
     if (!want.current) return false
@@ -285,16 +400,42 @@ export default function App() {
       api.invoke('chat:send', c.reply.replace('{name}', m.author || '')).catch(e => setNote({ text: clean(e), bad: true }))
     }
   }
-  const record = async () => {
+  // While recording, remember where the pointer goes on the preview: the editor turns it into automatic zooms and a drawn cursor.
+  useEffect(() => {
+    if (!rec) return
+    const tr = trackRef.current; let last = 0
+    const on = e => {
+      const r = canvas.current?.getBoundingClientRect(); if (!r) return
+      const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height, now = performance.now(), d = e.type === 'pointerdown' ? 1 : e.type === 'pointerup' ? 2 : 0
+      if (x < 0 || x > 1 || y < 0 || y > 1 || (!d && now - last < 30)) return
+      last = now; tr.pts.push({ t: +((now - tr.t0) / 1000).toFixed(3), x: +x.toFixed(4), y: +y.toFixed(4), d })
+    }
+    for (const n of ['pointermove', 'pointerdown', 'pointerup']) addEventListener(n, on, true)
+    return () => { for (const n of ['pointermove', 'pointerdown', 'pointerup']) removeEventListener(n, on, true) }
+  }, [!!rec])
+  const recEnd = r => { const tr = trackRef.current; if (r.file && tr.edit) { tr.edit = false; api.send('editor:open', { video: r.file, track: tr.pts }) } }
+  const recOut = s => { // what to record: the studio preview, one frame or one scene, optionally scaled to 1080p / 2K / 4K
+    const ro = { target: 'preview', res: '', quality: 'high', ...s.recOpt }, fr = ro.target === 'frame' && s.frames?.find(f => f.id === ro.frameId), sc = ro.target === 'scene' && s.scenes.find(x => x.id === ro.sceneId)
+    const base = fr ? fr.size : sc ? (s.frames?.find(f => f.scenes.includes(sc.id))?.size || s.canvas) : s.canvas, [bw, bh] = base.split('x').map(Number)
+    const k = ro.res ? +ro.res / Math.min(bw, bh) : 1, size = Math.round(bw * k / 2) * 2 + 'x' + Math.round(bh * k / 2) * 2, [w, h] = size.split('x').map(Number)
+    const vbr = Math.round(w * h * (+s.fps || 30) * ({ standard: 0.08, high: 0.13, max: 0.22 }[ro.quality] || 0.13))
+    return { ...(fr ? { frameId: fr.id } : {}), ...(sc ? { sceneId: sc.id } : {}), ...(ro.res || sc ? { size } : {}), fps: +s.fps, vbr: Math.max(6e6, Math.min(vbr, 120e6)) }
+  }
+  const record = async edit => {
+    if (!rec) trackRef.current = { pts: [], t0: performance.now() + 250, edit: edit === true }
     if (rec) return eng.current.stopOutput('rec')
     setRec('00:00:00')
-    try { await eng.current.startOutput('rec', {}) } catch (e) { setRec(null); fail(e) }
+    try { await eng.current.startOutput('rec', recOut(sRef.current)) } catch (e) { setRec(null); fail(e) }
   }
 
   // ---- automation: chat / stream triggers → alert, sound, scene ----
+  // sound-effect sources nested under an effect (alert box, banner, lower third) in the current scene
+  const soundsOf = test => { const sc = sRef.current.scenes.find(x => x.id === sRef.current.sceneId), owners = new Set(sc?.layers.filter(test).map(l => l.id)); return sc?.layers.filter(l => l.type === 'sound' && l.visible !== false && owners.has(l.parent)) || [] }
+  const withSound = (layer, sfx) => { const snd = { ...newLayer('sound'), name: SFX.find(x => x[0] === sfx)?.[1] + ' sound', sfx, parent: layer.id }; eng.current.playSfx(sfx).catch(() => {}); return [layer, snd] }
   const act = (r, m = {}) => {
     const fill = t => (t || '').replace('{name}', m.author || 'Someone').replace('{amount}', m.amount || '').replace('{text}', m.text || '')
-    if (r.alert) eng.current.showAlert(fill(r.alert), fill(r.sub), undefined, r.afx)
+    if (r.alert) { eng.current.showAlert(fill(r.alert), fill(r.sub), undefined, r.afx); if (!r.sfx) soundsOf(l => l.type === 'alert').forEach(x => eng.current.playSfx(x.sfx, x.vol)) }
+    if (r.sfx) eng.current.playSfx(r.sfx).catch(() => {})
     if (r.sound) eng.current.playSound(r.sound).catch(fail)
     if (r.scene && sRef.current.scenes.some(x => x.id === r.scene)) set({ sceneId: r.scene })
   }
@@ -317,7 +458,7 @@ export default function App() {
     if (cap === 'on' && s.mode === 'app' && s.appMode === 'guard') set({ pkg }); else source({ mode: 'app', pkg })
   }
   const qa = {
-    s, set, cap, live, rec, ready, start: () => start(), stop: () => api.invoke('session:stop'), goLive: () => goLive(), record: () => record(),
+    s, set, cap, live, rec, ready, start: () => start(), stop: () => api.invoke('session:stop'), goLive: () => goLive(), record: () => record(), recEdit: () => record(true),
     shot: () => api.invoke('device:shot', serial).then(file => setNote({ text: 'Screenshot saved to Pictures', file })).catch(fail)
   }
 
@@ -385,6 +526,14 @@ export default function App() {
   const layerOf = id => (s.scenes.find(x => x.id === s.sceneId) || s.scenes[0]).layers.find(l => l.id === id)
   const touch = (a, e) => { const p = pos(e); if (p) api.send('ctl', { t: 'touch', a, ...p }) }
   const key = code => api.send('ctl', { t: 'key', code })
+  const pkey = k => cap === 'on' && k !== 'notifications' ? key(k) : api.invoke('phone:key', serial, k).catch(fail) // phone button, with or without capture
+  const sceneStep = d => { const f = s.frames?.find(x => x.id === s.frameId), list = f ? f.scenes : s.scenes.map(x => x.id), i = list.indexOf(s.sceneId); if (list.length > 1) set({ sceneId: list[(i + d + list.length) % list.length] }) }
+  const shortcuts = [
+    [['Home', House, () => pkey(3), false, !ready], ['Back', Undo2, () => pkey(4), false, !ready], ['Recents · open apps', LayoutGrid, () => pkey(187), false, !ready], ['Alerts · notifications', BellDot, () => pkey('notifications'), false, !ready],
+     ['Vol −', Volume1, () => pkey(25), false, !ready], ['Vol +', Volume2, () => pkey(24), false, !ready], ['Lock · screen on/off', Power, () => pkey(26), false, !ready], ['Shot · phone screenshot', Camera, () => qa.shot(), false, !ready]],
+    [['Prev · previous scene', ChevronLeft, () => sceneStep(-1)], ['Next · next scene', ChevronRight, () => sceneStep(1)], [s.cover ? 'Show · show phone' : 'Hide · hide phone', s.cover ? Eye : EyeOff, () => set({ cover: !s.cover }), s.cover],
+     [s.micMute ? 'Unmute · mic' : 'Mute · mic', s.micMute ? MicOff : Mic, () => set({ micMute: !s.micMute }), s.micMute], [rec ? 'Stop · recording' : 'Record', Circle, () => record(), !!rec]]
+  ]
   const ptr = game ? gamePtr : s.control ? {
     onContextMenu: e => { e.preventDefault(); canCtl && key(4) },
     onPointerDown: e => { if (e.button || !pos(e)) return; e.currentTarget.setPointerCapture(e.pointerId); touch(0, e); down.current = true },
@@ -457,6 +606,9 @@ export default function App() {
   // Game controls for any app: a key map bound to the app (by package), applied right away
   const ctlApp = apps?.find(a => a.pkg === (s.mode === 'app' && s.pkg ? s.pkg : focus))
   const mapFor = pkg => pkg && s.appKeymaps?.[pkg] in s.keymaps ? s.appKeymaps[pkg] : Object.keys(s.keymaps).find(k => s.keymaps[k].pkg === pkg) || ''
+  // everything the Props panel needs to show a source's own settings (same fields as the source window)
+  const srcProps = { onCapture: p => source(p), sx: s, setx: set, micList: media.mics, cams: media.cams, maps: s.keymaps, app: ctlApp, front: frontIsApp ? apps?.find(a => a.pkg === focus) : null, scenes: s.scenes, cap, ready,
+    onRestart: () => restartCap(), onRefresh: () => refreshPhone(), onUseApp: pkg => source({ mode: 'app', pkg }), mapFor: pkg => mapFor(pkg), bindMap: (pkg, k) => bindMap(pkg, k) }
   const bindMap = (pkg, k) => {
     if (!pkg && !k) return
     setS(o => ({ ...o, appKeymaps: pkg ? { ...o.appKeymaps, [pkg]: k || undefined } : o.appKeymaps, ...(k ? { keymapId: k, keymapOn: true, control: true } : pkg && mapFor(pkg) ? { keymapOn: false } : {}) }))
@@ -489,8 +641,28 @@ export default function App() {
     return () => { removeEventListener('keydown', d); removeEventListener('keyup', u) }
   }, [s.ptt?.mode, s.ptt?.key])
   // soundboard keys work everywhere
-  useEffect(() => { api.invoke('hotkeys:set', (s.pads || []).map(p => ({ id: p.id, key: p.key }))) }, [JSON.stringify((s.pads || []).map(p => p.key))])
-  useEffect(() => api.on('hotkey', id => { const p = sRef.current.pads?.find(x => x.id === id); if (p) eng.current.playSound(p.file).catch(() => {}) }), [])
+  const hk = [...(s.pads || []).map(p => ({ id: p.id, key: p.key })), ...Object.entries(s.sceneKeys || {}).filter(([, k]) => k).map(([id, key]) => ({ id: 'scene:' + id, key }))]
+  useEffect(() => { api.invoke('hotkeys:set', hk) }, [JSON.stringify(hk)])
+  useEffect(() => { api.send('pointer:on', !!s.ptr?.on) }, [!!s.ptr?.on])
+  useEffect(() => { // talking → talk scene, quiet for N seconds → quiet scene
+    const t = s.talkSw
+    if (!t?.on || !t.talk) return
+    let quietSince = performance.now()
+    const id = setInterval(() => {
+      const e = eng.current, cur = sRef.current.sceneId
+      if (!e) return
+      if (e.talking()) { quietSince = performance.now(); if (cur !== t.talk) set({ sceneId: t.talk }) }
+      else if (t.quiet && cur === t.talk && performance.now() - quietSince > t.after * 1000) set({ sceneId: t.quiet })
+    }, 120)
+    return () => clearInterval(id)
+  }, [JSON.stringify(s.talkSw)])
+  useEffect(() => api.on('hotkey', id => {
+    if (id.startsWith('scene:')) { // scene hotkeys from Settings
+      const k = id.slice(6), sc = sRef.current.scenes, i = sc.findIndex(x => x.id === sRef.current.sceneId)
+      const to = k === 'next' ? sc[(i + 1) % sc.length] : k === 'prev' ? sc[(i - 1 + sc.length) % sc.length] : sc.find(x => x.id === k)
+      if (to) set({ sceneId: to.id })
+      return
+    } const p = sRef.current.pads?.find(x => x.id === id); if (p) eng.current.playSound(p.file).catch(() => {}) }), [])
   // controllers: buttons → key map, left stick → move, right stick → aim
   useEffect(() => {
     if (!game) return
@@ -514,9 +686,9 @@ export default function App() {
   // updates
   const [upd, setUpd] = useState(null)
   useEffect(() => { if (saved && s.autoUpdate !== false) api.invoke('update:check').then(setUpd).catch(() => {}) }, [!saved])
-  const go = r => { setView(r.view || 'studio'); if (r.rtab) setRtab(r.rtab); if (r.add) { const l = newLayer(r.add); if (r.add === 'ios') setAdding('src'); else setSrcDlg({ layer: l, isNew: true }) } }
-  const DOCK = [['studio', 'Studio', SlidersVertical], ['new', 'What’s new', Bell], ['fx', 'Overlays', Wand2], ['keys', 'Keys', Gamepad2], ['device', 'Device', Smartphone]]
-  const addLayer = n => setS(o => { // from the Add source window; "bg" adds a hidden source used only as the blurred backdrop
+  const go = r => { if (r.view === 'edit') return api.send('editor:open'); setView(r.view || 'studio'); if (r.rtab) setRtab(r.rtab); if (r.add) { const l = newLayer(r.add); if (r.add === 'ios') setAdding('src'); else setSrcDlg({ layer: l, isNew: true }) } }
+  const DOCK = [['studio', 'Studio', SlidersVertical], ['new', 'What’s new', Bell], ['fx', 'Overlays', Wand2], ['keys', 'Keys', Gamepad2], ['edit', 'Editor', Film], ['device', 'Device', Smartphone], ['settings', 'Settings', Settings2]]
+  const addLayer = n => setS(o => { if (n.type === 'caption') o = { ...o, capOn: true } // from the Add source window; "bg" adds a hidden source used only as the blurred backdrop
     const bg = adding === 'bg', l = bg ? { ...n, bgOnly: true } : n
     return { ...o, scenes: o.scenes.map(sc => sc.id !== o.sceneId ? sc : { ...sc, layers: bg ? [l, ...sc.layers] : [...sc.layers, l], ...(bg ? { bgBlur: true, bgSrc: l.id } : {}) }) }
   })
@@ -529,7 +701,7 @@ export default function App() {
           <Logo size={22} /><span className="text-[15px] font-extrabold tracking-tight text-white">Meroro</span><span className="text-[11px] text-zinc-500">by Kartik Sabale</span>
         </button>
         <div className="flex-1" />
-        {view === 'studio' && <HeaderBar q={qa} eng={eng} toggleKeys={() => s.keymapOn ? set({ keymapOn: false }) : bindMap(ctlApp?.pkg, km === s.keymaps[s.keymapId] ? s.keymapId : Object.keys(s.keymaps)[0])} />}
+        {view === 'studio' && <HeaderBar q={{ ...qa, annot, setAnnot, overlayOn }} eng={eng} toggleKeys={() => s.keymapOn ? set({ keymapOn: false }) : bindMap(ctlApp?.pkg, km === s.keymaps[s.keymapId] ? s.keymapId : Object.keys(s.keymaps)[0])} />}
         {upd && <button className="no-drag h-7 px-3 rounded-full bg-orange-500 text-black text-[12px] font-semibold" onClick={() => setView('new')}>Update {upd.version} available</button>}
         {view === 'studio' && JSON.stringify(lay) !== JSON.stringify(DEF.layout) && <Button variant="ghost" className="no-drag px-2" title="Reset layout" onClick={() => set({ layout: DEF.layout })}><LayoutDashboard size={13} /></Button>}
         {note && (
@@ -551,7 +723,7 @@ export default function App() {
         {/* rail */}
         <nav className="w-[52px] shrink-0 flex flex-col items-center gap-1.5 py-2">
           {DOCK.map(([v, t, I]) => (
-            <button key={v} onClick={() => setView(v)} title={t}
+            <button key={v} onClick={() => v === 'edit' ? api.send('editor:open') : setView(v)} title={t}
               className={cx('relative size-10 rounded-full grid place-items-center transition-all duration-200', view === v ? 'bg-white/[0.1] text-violet-300' : 'text-zinc-500 hover:text-zinc-100 hover:bg-white/[0.06]')}><I size={18} strokeWidth={1.75} />
               {v === 'new' && (s.seenNew !== LATEST || upd) && <span className="absolute top-1.5 right-1.5 size-2 rounded-full bg-orange-500" />}</button>
           ))}
@@ -563,19 +735,29 @@ export default function App() {
         {view !== 'studio' && <Card key={view} className="pop flex-1 min-w-0 flex">
           {view === 'new' && <WhatsNew go={go} s={s} set={set} />}
           {view === 'fx' && <Overlays canvas={s.canvas} editing={fxEdit}
-            onBanner={l => { setS(o => ({ ...o, scenes: o.scenes.map(sc => sc.id !== o.sceneId ? sc : { ...sc, layers: [...sc.layers, l] }) })); setSel(l.id) }}
-            onScene={sc => { setS(o => ({ ...o, scenes: [...o.scenes, sc], sceneId: sc.id })); setSel(''); setView('studio') }}
-            onAlert={r => setS(o => ({ ...o, autos: [...(o.autos || []), { id: Math.random().toString(36).slice(2, 9), enabled: true, sound: '', scene: '', ...r }],
-              scenes: o.scenes.map(sc => sc.id !== o.sceneId || sc.layers.some(l => l.type === 'alert') ? sc : { ...sc, layers: [...sc.layers, newLayer('alert')] }) }))}
+            tab0={fxTab} capStyle={s.scenes.find(x => x.id === s.sceneId)?.layers.find(l => l.type === 'caption')?.preset}
+            onCaption={st => setS(o => { // apply to the scene's caption box, or add one
+              const { name, ...look } = st, cur = o.scenes.find(x => x.id === o.sceneId), has = cur?.layers.some(l => l.type === 'caption')
+              return { ...o, capOn: true, scenes: o.scenes.map(sc => sc.id !== o.sceneId ? sc : { ...sc, layers: has ? sc.layers.map(l => l.type === 'caption' ? { ...l, ...look, preset: name } : l) : [...sc.layers, { ...newLayer('caption'), ...look, preset: name }] }) }
+            })}
+            onBanner={l => { const add = withSound(l, 'swoosh'); setS(o => ({ ...o, scenes: o.scenes.map(sc => sc.id !== o.sceneId ? sc : { ...sc, layers: [...sc.layers, ...add] }) })); setSel(l.id) }}
+            onScene={sc => { eng.current.playSfx('whoosh').catch(() => {}); setS(o => ({ ...o, scenes: [...o.scenes, sc], sceneId: sc.id })); setSel(''); setView('studio') }}
+            onAlert={r => { const sfx = SFX_FOR[r.afx?.style] || 'ding'; eng.current.playSfx(sfx).catch(() => {}); setS(o => ({ ...o, autos: [...(o.autos || []), { id: Math.random().toString(36).slice(2, 9), enabled: true, sound: '', scene: '', ...r }],
+              scenes: o.scenes.map(sc => { if (sc.id !== o.sceneId) return sc; const box = sc.layers.find(l => l.type === 'alert'), b = box || newLayer('alert')
+                return { ...sc, layers: [...(box ? sc.layers : [...sc.layers, b]), ...(sc.layers.some(l => l.type === 'sound' && l.parent === b.id) ? [] : [{ ...newLayer('sound'), name: SFX.find(x => x[0] === sfx)?.[1] + ' sound', sfx, parent: b.id }])] } }) })) }}
             onSave={(id, p) => { setS(o => ({ ...o, scenes: o.scenes.map(sc => ({ ...sc, layers: sc.layers.map(l => l.id === id ? { ...l, ...p } : l) })) })); setFxEdit(null); setView('studio') }} />}
           {view === 'keys' && <Keys s={s} set={set} eng={eng} focus={focus} apps={apps} />}
+          {view === 'edit' && <Editor start={editStart} onNote={setNote} />}
+          {view === 'settings' && <Settings s={s} set={set} onNote={setNote} />}
           {view === 'device' && <Device devices={devices} serial={serial} setSerial={setSerial} ready={ready} focus={focus} apps={apps} meta={meta} onNote={setNote} />}
         </Card>}
         <div className={cx('flex-1 min-w-0 grid gap-1.5', view !== 'studio' && 'hidden')} style={{ gridTemplateColumns: lay.map(c => c.includes('preview') ? 'minmax(0,1fr)' : c.includes('scene') ? '322px' : '264px').join(' '), gridTemplateRows: 'auto minmax(0,1fr) minmax(0,1fr) auto' }}>
         {/* left card: app library + phone */}
-        <Slot key="apps" id="apps" pos={place('apps')} swap={swap}><Card className="flex-1 min-h-0 flex flex-col">
+        <Slot key="apps" id="apps" pos={place('apps')} swap={swap}><Card className="relative flex-1 min-h-0 flex flex-col">
+          {mgr && <Manager s={s} set={set} sel={sel} setSel={setSel} editScene={id => setSceneDlg(id)} editSource={l => setSrcDlg({ layer: l })} onClose={() => setMgr(false)} />}
+          {!mgr && side === 'scene' && <button title="View all frames, scenes and sources" onClick={() => setMgr(true)} className="absolute right-3 bottom-3 z-20 h-9 flex items-center gap-1.5 rounded-full bg-white px-3.5 text-[12px] font-semibold text-black shadow-xl transition-transform hover:-translate-y-0.5"><Layers size={13} />View all</button>}
           <div className="p-2.5 pb-1.5"><Segmented value={side} onChange={setSide} options={[['scene', 'Scene', Layers], ['apps', 'Apps', AppWindow], ['phone', 'Phone', Smartphone]]} /></div>
-          {side === 'scene' ? <div className="flex-1 min-h-0 -mt-1.5"><Panel part={side} s={s} set={set} live={live} busy={busy} media={media} sel={sel} setSel={setSel} focus={focus} apps={apps} goPresets={() => setPicker(true)} addSource={k => setAdding(k || 'src')} editScene={setSceneDlg} editSource={l => setSrcDlg({ layer: l })} /></div>
+          {side === 'scene' ? <div className="flex-1 min-h-0 -mt-1.5"><Panel part={side} s={s} set={set} live={live} busy={busy} media={media} sel={sel} setSel={setSel} focus={focus} apps={apps} goPresets={() => setPicker(true)} addSource={k => setAdding(k || 'src')} editScene={setSceneDlg} editSource={l => setSrcDlg({ layer: l })} onSideBySide={() => setSbs(true)} goGame={g => setPicker({ game: g })} onPresetFor={(f, ori) => { set({ frameId: f.id, canvas: f.size, sceneId: f.sceneId }); setPicker({ ori }) }} onViewAll={() => setMgr(true)} /></div>
           : side === 'apps' ? <>
             <div className="px-2.5 pb-2 flex gap-1.5">
               <div className="relative flex-1">
@@ -634,8 +816,9 @@ export default function App() {
                     options={[['', 'Same as phone'], ['1920x1080/280', 'Landscape 1080p'], ['1080x1920/420', 'Portrait 1080p']]} /></Row>
                 )}
               </>}
-              <Row label="Quality"><Select className="flex-1" value={s.maxSize} onChange={maxSize => source({ maxSize })} options={[[1920, '1080p'], [1280, '720p'], [0, 'Native resolution']]} /></Row>
-              <Row label="Frame rate"><Select className="flex-1" value={s.capFps} onChange={capFps => source({ capFps })} options={[[60, '60 fps'], [30, '30 fps']]} /></Row>
+              <Row label="Quality"><Select className="flex-1" value={s.maxSize} onChange={maxSize => source({ maxSize })} options={[[0, 'Native (sharpest)'], [2560, '1440p / 2K'], [1920, '1080p'], [1600, '900p'], [1280, '720p']]} /></Row>
+              <Row label="Frame rate"><Select className="flex-1" value={s.capFps} onChange={capFps => source({ capFps })} options={[[120, '120 fps'], [90, '90 fps'], [60, '60 fps'], [30, '30 fps']]} /></Row>
+              <Row label="Bitrate"><Select className="flex-1" value={s.capBitrate} onChange={capBitrate => source({ capBitrate: +capBitrate })} options={[[4, '4 Mbps'], [8, '8 Mbps'], [12, '12 Mbps'], [16, '16 Mbps'], [24, '24 Mbps'], [32, '32 Mbps'], [40, '40 Mbps']]} /></Row>
               <Row label="Phone audio"><Switch checked={s.phoneAudio} onChange={phoneAudio => source({ phoneAudio })} /></Row>
               {s.phoneAudio && <Row label="Sound plays"><Select className="flex-1" value={s.audioDup ? 'both' : 'pc'} onChange={v => source({ audioDup: v === 'both' })}
                 options={[['both', 'On phone + stream'], ['pc', 'Stream only (phone silent)']]} /></Row>}
@@ -652,6 +835,7 @@ export default function App() {
             <div className="relative flex-1 min-h-0">
               <canvas ref={canvas} tabIndex={0} {...ptr}
                 className={cx('absolute inset-0 m-auto max-w-full max-h-full rounded-2xl ring-1 ring-white/10 shadow-2xl outline-none', canCtl ? 'cursor-pointer' : !s.control && 'cursor-move')} />
+              {annot && <Annotate eng={eng} canvas={canvas} onClose={() => setAnnot(false)} />}
               <div className="absolute top-3 left-3 flex items-center gap-1.5 pointer-events-none">
                 <span className="h-7 px-2.5 rounded-lg bg-black/50 backdrop-blur-md border border-white/15 text-[11px] font-semibold grid place-items-center">{s.canvas.replace('x', '×')}</span>
                 <span className="h-7 px-2.5 rounded-lg bg-black/50 backdrop-blur-md border border-white/10 text-[11px] tabular-nums text-amber-300 grid place-items-center">{s.fps} FPS</span>
@@ -669,7 +853,7 @@ export default function App() {
               {cap === 'starting' && <div className="absolute bottom-3 left-1/2 -translate-x-1/2 h-7 px-3 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-[12px] text-zinc-300 flex items-center gap-1.5 pointer-events-none whitespace-nowrap"><RefreshCw size={12} className="animate-spin" />Connecting to {dev?.model}…</div>}
               {covered && <div className="absolute top-12 left-1/2 -translate-x-1/2 h-7 px-3 rounded-full bg-amber-500 text-black text-[12px] font-semibold flex items-center gap-1.5 whitespace-nowrap"><ShieldCheck size={13} />Stream covered — {picked?.name || 'the app'} is not in front</div>}
             </div>
-            <Perf serial={serial} ready={ready} eng={eng} />
+            <Perf serial={serial} ready={ready} eng={eng} actions={shortcuts} />
             <div className="h-10 shrink-0 flex items-center gap-1 px-3 rounded-2xl border border-white/[0.06] bg-[#1b1b1d]">
               <Button variant="ghost" className="px-2" disabled={!canCtl} onClick={() => key(4)} title="Back"><ChevronLeft size={15} /></Button>
               <Button variant="ghost" className="px-2" disabled={!canCtl} onClick={() => key(3)} title="Home"><Circle size={12} /></Button>
@@ -690,11 +874,8 @@ export default function App() {
             </div>
           </div></Slot>
 
-          <Slot key="mixer" id="mixer" pos={place('mixer')} swap={swap}><Card className="flex-1 flex flex-col justify-center gap-1 p-1.5">
-            <Strip icon={Volume2} title="Phone audio" level={() => eng.current?.level('phone') || 0} value={s.phoneVol} onChange={phoneVol => set({ phoneVol })}
-              right={<Button variant="ghost" title="Monitor (hear phone audio)" className={cx('h-8 w-[150px]', s.monitor && 'text-white bg-white/10')} onClick={() => set({ monitor: !s.monitor })}><Headphones size={13} />Monitor</Button>} />
-            <Strip icon={Mic} title="Microphone" level={() => eng.current?.level('mic') || 0} value={s.micVol} onChange={micVol => set({ micVol })}
-              right={<Select className="w-[150px] shrink-0" value={s.mic} onChange={mic => set({ mic })} options={[['', 'Off'], ['default', 'System default'], ...media.mics]} />} />
+          <Slot key="mixer" id="mixer" pos={place('mixer')} swap={swap}><Card className="flex-1 flex">
+            <Mixer s={s} set={set} eng={eng} mics={media.mics} onAddMic={addMicSource} onAddSource={k => setAdding(k === 'phone' ? 'src' : k)} onMusic={() => { setView('studio'); setRtab('sounds') }} onEffects={() => setAdding('sound')} />
           </Card></Slot>
 
 
@@ -704,28 +885,27 @@ export default function App() {
             <div className="px-1.5 pt-1.5"><Segmented value={rtab} onChange={setRtab} options={[['props', 'Props', SlidersVertical], ['live', 'Stream', Radio], ['auto', 'Auto', Zap], ['sounds', 'Sound', Music]]} /></div>
             {rtab === 'auto' ? <div className="flex-1 min-h-0 overflow-y-auto p-1.5"><AutoPanel s={s} set={set} stopSound={() => eng.current.stopSound()} test={r => act(r, { author: 'Test viewer', amount: '₹100', text: 'Great stream!' })}
               appRules={<Panel mode="auto" s={s} set={set} focus={focus} apps={apps} media={media} sel="" setSel={() => {}} />} /></div>
-            : rtab === 'sounds' ? <div className="flex-1 min-h-0 overflow-y-auto p-1.5"><Sounds s={s} set={set} eng={eng} /></div>
-            : rtab === 'live' ? <div className="flex-1 min-h-0 overflow-y-auto"><Panel part="live" s={s} set={set} live={live} busy={busy} media={media} sel={sel} setSel={setSel} focus={focus} apps={apps} />
-              <div className="px-1.5 pb-1.5"><StreamPlus s={s} set={set} hist={hist} live={live} busy={busy} game={apps?.find(x => x.pkg === focus)?.name} /></div></div>
-            : <Panel part={rtab} editFx={l => { setFxEdit(l); setView('fx') }} editSource={l => setSrcDlg({ layer: l })} s={s} set={set} live={live} busy={busy} media={media} sel={sel} setSel={setSel} focus={focus} apps={apps} />}
+            : rtab === 'sounds' ? <div className="flex-1 min-h-0 overflow-y-auto p-1.5"><Sounds s={s} set={set} eng={eng} addLayer={addLayer} openStyles={() => { setFxTab('caption'); setView('fx') }} /></div>
+            : rtab === 'live' ? <div className="flex-1 min-h-0 overflow-y-auto"><StreamTabs s={s} set={set} live={live} busy={busy} xst={xst} />
+              <div className="px-1.5 pb-1.5"><StreamPlus s={s} set={set} hist={hist} live={live} busy={busy} xst={xst} game={apps?.find(x => x.pkg === focus)?.name} /></div></div>
+            : <Panel part={rtab} srcProps={srcProps} editFx={l => { setFxEdit(l); setView('fx') }} editSource={l => setSrcDlg({ layer: l })} s={s} set={set} live={live} busy={busy} media={media} sel={sel} setSel={setSel} focus={focus} apps={apps} />}
           </Card></Slot>
           <Slot key="live" id="live" pos={place('live')} swap={swap}><Card className="flex-1 p-2.5 flex flex-col justify-center gap-2">
-            <Button variant={live ? 'default' : 'live'} className="h-11 rounded-2xl text-[13px] font-semibold" onClick={goLive}>
-              {live ? <><Square size={12} className="fill-current" />{live === 'on' ? 'End stream' : 'Cancel'}</> : <><Radio size={15} />Go Live</>}
-            </Button>
-            <div className="text-center text-[10px] text-zinc-500 truncate">{s.dest === 'youtube' ? 'YouTube' : 'Custom RTMP'} · {s.canvas.replace('x', '×')} · {s.fps} fps · {s.bitrate} kbps</div>
+            <GoLiveBar s={s} set={set} live={live} rec={rec} goLive={goLive} record={() => record()} />
+            <div className="text-center text-[10px] text-zinc-500 truncate">{platform(s.dest).name}{(s.dests || []).filter(d => d.on && d.key).length ? ` + ${(s.dests || []).filter(d => d.on && d.key).length} more` : ''} · {s.canvas.replace('x', '×')} · {s.fps} fps · {s.bitrate} kbps</div>
           </Card></Slot>
 
         </div>
 
-        {adding && <AddSource only={adding === 'bg'} cams={media.cams} meta={meta} front={adding !== 'bg' && frontIsApp ? apps?.find(a => a.pkg === focus) : null}
+        {adding && <AddSource kind0={adding === 'mic' || adding === 'sound' ? adding : ''} mics={media.mics} onMic={addMicSource} only={adding === 'bg'} cams={media.cams} meta={meta} front={adding !== 'bg' && frontIsApp ? apps?.find(a => a.pkg === focus) : null}
           onAddApp={a => { // the open app becomes a phone source showing only that app
             const l = { ...newLayer('phone'), name: a.name, pkg: a.pkg, w: 1, h: 1 }, o2 = { ...s, mode: 'app', appMode: 'guard', pkg: a.pkg }
             setS(o => ({ ...o, mode: 'app', appMode: 'guard', pkg: a.pkg, scenes: o.scenes.map(sc => sc.id !== o.sceneId ? sc : { ...sc, layers: [...sc.layers, l] }) }))
             setSel(l.id)
             if (cap === 'on' && s.mode === 'app' && s.appMode === 'guard') api.send('ctl', { t: 'app', pkg: a.pkg }); else if (ready) start(o2)
           }} onClose={() => setAdding(null)} onPick={n => adding === 'bg' ? addLayer(n) : setSrcDlg({ layer: n, isNew: true })} />}
-        {srcDlg && <SourceDialog layer={srcDlg.layer} isNew={srcDlg.isNew} cams={media.cams} eng={eng} onClose={() => setSrcDlg(null)} maps={s.keymaps} app={ctlApp} mapFor={mapFor}
+        {sbs && s.frames && <SideBySide s={s} set={set} eng={eng} live={live} xst={xst} onClose={() => setSbs(false)} />}
+        {srcDlg && <SourceDialog onCapture={p => source(p)} sx={s} setx={set} micList={media.mics} front={frontIsApp ? apps?.find(a => a.pkg === focus) : null} onUseApp={pkg => source({ mode: 'app', pkg })} cap={cap} ready={ready} onRestart={restartCap} onRefresh={refreshPhone} layer={srcDlg.layer} isNew={srcDlg.isNew} cams={media.cams} eng={eng} onClose={() => setSrcDlg(null)} maps={s.keymaps} app={ctlApp} mapFor={mapFor}
           onSave={d => { if (d.type === 'phone') bindMap(d.pkg || ctlApp?.pkg, d.keymap); delete d.keymap; if (srcDlg.isNew) { addLayer(d); setSel(d.id); set({ control: false }) } else setS(o => ({ ...o, ...patchLayer(o, d.id, d) })) }}
           onDelete={id => setS(o => ({ ...o, scenes: o.scenes.map(sc => ({ ...sc, layers: sc.layers.filter(x => x.id !== id) })) }))} />}
         {sceneDlg && (() => { const cur = s.scenes.find(x => x.id === s.sceneId) || s.scenes[0], isNew = sceneDlg === 'new'
@@ -734,7 +914,7 @@ export default function App() {
             onSave={d => setS(o => isNew ? { ...o, scenes: [...o.scenes, d], sceneId: d.id } : { ...o, scenes: o.scenes.map(x => x.id === d.id ? d : x) })}
             onDelete={id => setS(o => { const n = o.scenes.filter(x => x.id !== id); return { ...o, scenes: n, sceneId: o.sceneId === id ? n[0].id : o.sceneId } })} /> })()}
         {s.chatFloat && <FloatChat pos={s.chatPos} onMove={chatPos => set({ chatPos })} onClose={() => set({ chatFloat: false })}><ChatBox s={s} set={set} chat={chat} st={chatSt} go={chatGo} /></FloatChat>}
-        {picker && <PresetPicker onPick={applyPreset} onClose={() => setPicker(false)} />}
+        {picker && <PresetPicker ori0={picker.ori} game={picker.game} onPick={applyPreset} onClose={() => setPicker(false)} />}
         {about && <About onClose={() => setAbout(false)} />}
         {perm && <Permissions devices={devices} onClose={() => { setPerm(false); eng.current.refreshMedia() }} addScreen={x => {
           const n = { ...newLayer('screen'), src: x.id, name: x.name }

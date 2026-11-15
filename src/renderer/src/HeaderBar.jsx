@@ -1,26 +1,26 @@
 // Title-bar quick controls: compact volume sliders and one-click toggles. The gear picks which ones show (saved in settings).
 import { useState } from 'react'
-import { Circle, Mic, MicOff, Volume2, VolumeX, Headphones, AudioLines, EyeOff, Eye, Gamepad2, MousePointer2, MessageSquare, Camera, Wand2, Settings2, Clapperboard, Check } from 'lucide-react'
+import { MonitorUp, Swords, PenLine, Circle, Mic, MicOff, Volume2, VolumeX, Headphones, AudioLines, EyeOff, Eye, Gamepad2, MousePointer2, MessageSquare, Camera, Wand2, Settings2, Clapperboard, Check } from 'lucide-react'
 import { Slider, Select, cx } from './ui'
 
 const ACTIONS = {
-  rec: ['Record', Circle], mic: ['Mute mic', MicOff], phone: ['Mute phone audio', VolumeX], monitor: ['Hear phone audio', Headphones],
+  annot: ['Annotate (draw on stream)', PenLine], annotScr: ['Annotate on screen (draw over any app) · Ctrl/Cmd+Shift+D', MonitorUp], ptr: ['Animated stream pointer', Swords], rec: ['Record', Circle], recEdit: ['Record & edit (auto zoom editor opens after)', Clapperboard], mic: ['Mute mic', MicOff], phone: ['Mute phone audio', VolumeX], monitor: ['Hear phone audio', Headphones],
   noise: ['Noise suppression', AudioLines], cover: ['Hide phone on stream', EyeOff], keys: ['Game controls', Gamepad2], control: ['Control phone with mouse', MousePointer2],
   auto: ['Auto scene switching', Wand2], chat: ['Chat window', MessageSquare], shot: ['Phone screenshot', Camera]
 }
 const SLIDERS = { phoneVol: ['Phone', Volume2, 'phone'], micVol: ['Mic', Mic, 'mic'] }
-export const HQ_DEFAULT = { hq: ['rec', 'mic', 'phone', 'cover', 'keys', 'chat', 'shot'], hqSliders: ['phoneVol', 'micVol'], hqScene: true }
+export const HQ_DEFAULT = { hq: ['annot', 'annotScr', 'ptr', 'rec', 'recEdit', 'mic', 'phone', 'cover', 'keys', 'chat', 'shot'], hqSliders: ['phoneVol', 'micVol'], hqScene: true }
 
 export default function HeaderBar({ q, eng, toggleKeys }) {
   const { s, set } = q, [edit, setEdit] = useState(false)
-  const shown = s.hq ?? HQ_DEFAULT.hq, sliders = s.hqSliders ?? HQ_DEFAULT.hqSliders, scene = s.hqScene ?? HQ_DEFAULT.hqScene
+  const shown = s.hq ? (() => { const NEW = ['annot', 'annotScr', 'ptr', 'recEdit'].filter(k => !s.hqSeen?.includes(k)); return [...NEW, ...s.hq.filter(k => !NEW.includes(k))] })() : HQ_DEFAULT.hq, sliders = s.hqSliders ?? HQ_DEFAULT.hqSliders, scene = s.hqScene ?? HQ_DEFAULT.hqScene
   const state = {
-    rec: [!!q.rec, q.record], mic: [s.micMute, () => set({ micMute: !s.micMute })], phone: [s.phoneMute, () => set({ phoneMute: !s.phoneMute })],
+    annot: [q.annot, () => q.setAnnot(!q.annot)], annotScr: [q.overlayOn, () => window.api.send('overlay:toggle')], ptr: [!!s.ptr?.on, () => set({ ptr: { style: 'sword', size: 1, color: '#7dd3fc', trail: true, click: true, ...s.ptr, on: !s.ptr?.on } })], rec: [!!q.rec, q.record], recEdit: [false, q.recEdit, !!q.rec], mic: [s.micMute, () => set({ micMute: !s.micMute })], phone: [s.phoneMute, () => set({ phoneMute: !s.phoneMute })],
     monitor: [s.monitor, () => set({ monitor: !s.monitor })], noise: [s.noise, () => set({ noise: !s.noise })], cover: [s.cover, () => set({ cover: !s.cover })],
     keys: [s.keymapOn, toggleKeys], control: [s.control, () => set({ control: !s.control })], auto: [s.autoSwitch, () => set({ autoSwitch: !s.autoSwitch })],
     chat: [s.chatFloat, () => set({ chatFloat: !s.chatFloat })], shot: [false, q.shot, !q.ready]
   }
-  const flip = (k, list, key) => set({ [key]: list.includes(k) ? list.filter(x => x !== k) : [...list, k] })
+  const flip = (k, list, key) => set({ [key]: list.includes(k) ? list.filter(x => x !== k) : [...list, k], hqSeen: ['annot', 'annotScr', 'ptr', 'recEdit'] })
 
   return (
     <div className="no-drag relative flex items-center gap-1.5 min-w-0">

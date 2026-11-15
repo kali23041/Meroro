@@ -48,19 +48,55 @@ export function usePerf(serial, ready, eng) {
   return h
 }
 
-export default function Perf({ serial, ready, eng }) {
+// Ring gauge: rounded arc with a soft glow, the value in the middle and a white dot where the arc ends.
+function Ring({ label, value, unit, pct, warn }) {
+  const r = 16, C = 2 * Math.PI * r, gap = 0.14, arc = C * (1 - gap), p = Math.max(0, Math.min(1, (pct || 0) / 100)), on = value != null
+  const col = warn ? ['#fdba74', '#f97316'] : p > 0.75 ? ['#fde68a', '#f59e0b'] : ['#86efac', '#22c55e'], id = 'rg' + label.replace(/\W/g, '')
+  const a = (-90 + gap * 180 + p * (1 - gap) * 360) * Math.PI / 180, dx = 20 + r * Math.cos(a), dy = 20 + r * Math.sin(a)
+  return <div className="flex-1 flex flex-col items-center gap-0.5 min-w-0" title={`${label}: ${on ? value + ' ' + unit : 'no data'}`}>
+    <div className="relative w-full max-w-9 aspect-square">
+      <svg viewBox="0 0 40 40" className="absolute inset-0 overflow-visible">
+        <defs><linearGradient id={id} x1="0" y1="1" x2="1" y2="0"><stop offset="0" stopColor={col[1]} /><stop offset="1" stopColor={col[0]} /></linearGradient>
+          <filter id={id + 'g'} x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="1.6" /></filter></defs>
+        <g transform={`rotate(${-90 + gap * 180} 20 20)`}>
+          <circle cx="20" cy="20" r={r} fill="none" stroke="rgba(255,255,255,.12)" strokeWidth="3.4" strokeLinecap="round" strokeDasharray={`${arc} ${C}`} />
+          {on && p > 0 && <><circle cx="20" cy="20" r={r} fill="none" stroke={`url(#${id})`} strokeWidth="3.4" strokeLinecap="round" strokeDasharray={`${arc * p} ${C}`} filter={`url(#${id}g)`} opacity=".7" className="transition-[stroke-dasharray] duration-700" />
+            <circle cx="20" cy="20" r={r} fill="none" stroke={`url(#${id})`} strokeWidth="3.4" strokeLinecap="round" strokeDasharray={`${arc * p} ${C}`} className="transition-[stroke-dasharray] duration-700" /></>}
+        </g>
+        {on && <circle cx={dx} cy={dy} r="1.6" fill="#fff" className="transition-all duration-700" />}
+      </svg>
+      <span className="absolute inset-0 grid place-items-center text-[10px] font-bold tabular-nums text-white">{on ? value : '–'}</span>
+    </div>
+    <span className="max-w-full truncate text-[8.5px] font-medium uppercase tracking-wide text-zinc-500">{label}</span>
+  </div>
+}
+
+export default function Perf({ serial, ready, eng, actions = [] }) {
   const h = usePerf(serial, ready, eng)
-  const c = h.at(-1) || {}, col = k => h.map(x => x[k] || 0)
+  const c = h.at(-1) || {}
   const r1 = v => v == null || Number.isNaN(v) ? null : Math.round(v)
   return (
-    <div className="shrink-0 flex gap-1.5 p-1.5 rounded-2xl border border-white/[0.06] bg-[#1b1b1d]">
-      <Tile icon={Cpu} label="CPU" value={r1(c.cpu)} unit="%" pct={c.cpu} warn={c.cpu > 85} />
-      <Tile icon={Gauge} label="GPU" value={r1(c.gpu)} unit="%" pct={c.gpu} warn={c.gpu > 90} />
-      <Tile icon={MemoryStick} label="RAM" value={c.ramUsed ? c.ramUsed.toFixed(1) : null} unit="GB" pct={c.ramTotal && (100 * c.ramUsed) / c.ramTotal} warn={c.ramUsed / c.ramTotal > 0.9} />
-      <Tile icon={Thermometer} label="CPU°" value={r1(c.cpuTemp) || null} unit="°C" pct={(c.cpuTemp - 25) * 100 / 65} warn={c.cpuTemp > 70} />
-      <Tile icon={Thermometer} label="BAT°" value={c.batTemp ? c.batTemp.toFixed(1) : null} unit="°C" pct={(c.batTemp - 20) * 100 / 30} warn={c.batTemp > 42} />
-      <Tile icon={c.charging ? BatteryCharging : Battery} label="BAT" value={r1(c.battery) || null} unit="%" pct={c.battery} warn={c.battery < 15 && !c.charging} />
-      <Tile icon={Film} label="FPS" value={ready && h.length ? c.fps : null} unit="fps" pct={(c.fps || 0) * 100 / 60} />
+    <div className="shrink-0 flex items-stretch gap-1.5 p-1.5 rounded-2xl border border-white/[0.06] bg-[#1b1b1d]">
+      <div className="w-[30%] min-w-0 flex items-center gap-0.5 rounded-xl bg-[#111113] px-1.5 py-1.5">
+        <Ring label="CPU" value={r1(c.cpu)} unit="%" pct={c.cpu} warn={c.cpu > 85} />
+        <Ring label="GPU" value={r1(c.gpu)} unit="%" pct={c.gpu} warn={c.gpu > 90} />
+        <Ring label="RAM" value={c.ramUsed ? c.ramUsed.toFixed(1) : null} unit="GB" pct={c.ramTotal && (100 * c.ramUsed) / c.ramTotal} warn={c.ramUsed / c.ramTotal > 0.9} />
+        <Ring label="CPU°" value={r1(c.cpuTemp) || null} unit="°C" pct={(c.cpuTemp - 25) * 100 / 65} warn={c.cpuTemp > 70} />
+        <Ring label="BAT°" value={c.batTemp ? Math.round(c.batTemp) : null} unit="°C" pct={(c.batTemp - 20) * 100 / 30} warn={c.batTemp > 42} />
+        <Ring label="BAT" value={r1(c.battery) || null} unit="%" pct={c.battery} warn={c.battery < 15 && !c.charging} />
+        <Ring label="FPS" value={ready && h.length ? c.fps : null} unit="" pct={(c.fps || 0) * 100 / 60} />
+      </div>
+      {/* shortcuts: phone buttons and studio actions, one tap each */}
+      <div className="flex-1 min-w-0 flex items-center gap-0.5 overflow-hidden rounded-xl bg-[#111113] px-1.5 py-1.5">
+        {actions.map((g, gi) => <div key={gi} className="contents">
+          {gi > 0 && <span className="mx-0.5 h-8 w-px shrink-0 bg-white/[0.08]" />}
+          {g.map(([t, I, fn, on, dis]) => <button key={t} title={t} disabled={dis} onClick={fn}
+            className={cx('group flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 h-[50px] rounded-xl transition-all duration-200 disabled:opacity-30', on ? 'bg-white text-black' : 'text-zinc-300 hover:bg-white/[0.08] hover:text-white active:scale-95')}>
+            <span className={cx('size-7 grid place-items-center rounded-full', on ? '' : 'bg-white/[0.06] group-hover:bg-white/[0.12]')}><I size={14} /></span>
+            <span className={cx('w-full truncate text-center text-[9px] font-medium', on ? 'text-black/70' : 'text-zinc-500 group-hover:text-zinc-300')}>{t.split(' · ')[0]}</span>
+          </button>)}
+        </div>)}
+      </div>
     </div>
   )
 }
