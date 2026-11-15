@@ -7,6 +7,12 @@ import { VERSION } from './Brand'
 const api = window.api
 const L = (title, desc, go, tag) => ({ title, desc, go, tag })
 export const RELEASES = [
+  { v: '1.13.0', items: [
+    L('Android camera as webcam', 'Add source → Android camera: use the phone’s back or front camera as a sharp, low-delay webcam over USB or Wi-Fi debugging (Android 12+). Face tracking and every webcam setting work with it.', {}, 'Sources'),
+    L('iPhone camera as webcam', 'Add source → iPhone camera: Continuity Camera on Mac, wireless and built in, or any iPhone over Wi-Fi.', {}, 'Sources'),
+    L('Any phone camera over Wi-Fi', 'Scan a QR code and the phone’s browser sends its camera to Meroro over your Wi-Fi. No app and no cable; flip cameras and pick 720p, 1080p or 4K on the phone.', {}, 'Sources'),
+    L('QR code pairing', 'Pair an Android phone for wireless debugging by scanning a QR code, like Android Studio. Meroro pairs and connects by itself.', {}, 'Phone'),
+  ] },
   { v: '1.12.0', items: [
     L('Voice changer', '42 voices (female, male, kids, characters, robots, places) plus your own custom voices, live on your mic. Record a 4-second test and preview any voice before using it.', {}, 'Audio'),
     L('Multiple microphones', 'Add as many mics as you like. The mic slot splits into 2 or 3 faders, with “View all” for more; each mic has its own settings inside its fader.', {}, 'Audio'),

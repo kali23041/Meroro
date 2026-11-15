@@ -42,13 +42,14 @@ const hex = n => n.toString(16).padStart(2, '0')
 // A second H.264 feed (iPhone/iPad): same packet format as the Android one.
 class Feed {
   frame = null; keep = []; cfg = null; needKey = true; ts = 0; dec = null
+  constructor(out) { this.out = out } // out(frame): hand decoded frames on (phone cameras) instead of keeping the latest
   push(p) {
     if (p.config) { this.cfg = p.data; this.needKey = true; if (this.dec?.state === 'configured') this.dec.close(); this.dec = null; return }
     if (!this.cfg || (this.needKey && !p.key)) return
     let data = p.data
     if (p.key) {
       if (!this.dec || this.dec.state !== 'configured') {
-        this.dec = new VideoDecoder({ output: f => { this.keep.push(this.frame); this.frame = f; while (this.keep.length > 3) this.keep.shift()?.close() }, error: () => { this.needKey = true } })
+        this.dec = new VideoDecoder({ output: f => { if (this.out) return this.out(f); this.keep.push(this.frame); this.frame = f; while (this.keep.length > 3) this.keep.shift()?.close() }, error: () => { this.needKey = true } })
         this.dec.configure({ codec: avcCodec(this.cfg), optimizeForLatency: true })
       }
       data = new Uint8Array(this.cfg.length + p.data.length); data.set(this.cfg); data.set(p.data, this.cfg.length); this.needKey = false
@@ -68,6 +69,59 @@ function avcCodec(d) { // codec string from the SPS inside an Annex B config pac
 export const MIX0 = { pan: 0, low: 0, mid: 0, high: 0, comp: 0, delay: 0, gate: 0, hp: false, mon: false }
 export class Engine {
   s = { fps: 30 }
+  // ---- phones as webcams ----
+  wcams = {}; camGen = {}; acam = {}
+  _phoneCams = [
+    api.on('acam:video', (id, p) => this.acam[id]?.(p)),
+    api.on('acam:end', (id, err) => { if (this.acam[id] && err) this.onError?.(new Error('Phone camera: ' + err)) }),
+    api.on('wcam:offer', o => this.answerPhone(o).catch(e => console.warn('phone camera', e))),
+    api.on('wcam:chunk', c => this.relayChunk(c))
+  ]
+  // Wi-Fi relay: the phone records short chunks and posts them; they play through Media Source, then feed the studio like a camera.
+  relayChunk({ id, name, sid, mime, data }) {
+    let w = this.wcams[id]
+    if (!w || w.sid !== sid) {
+      w?.pc?.close(); w?.v?.remove?.()
+      const v = document.createElement('video'), ms = new MediaSource()
+      v.muted = true; v.playsInline = true; v.src = URL.createObjectURL(ms)
+      w = this.wcams[id] = { name, sid, v, q: [], stream: null, last: Date.now() }
+      let type = mime.split(';')[0] === 'video/mp4' ? (/codecs/.test(mime) ? mime : 'video/mp4; codecs="avc1.42E01F"') : /codecs/.test(mime) ? mime : 'video/webm; codecs="vp8"'
+      if (!MediaSource.isTypeSupported(type)) type = type.startsWith('video/mp4') ? 'video/mp4; codecs="avc1.640028"' : 'video/webm; codecs="vp8"'
+      ms.addEventListener('sourceopen', () => {
+        try { w.sb = ms.addSourceBuffer(type); w.sb.mode = 'sequence' } catch (e) { return console.warn('phone relay', type, e) }
+        w.sb.addEventListener('updateend', () => {
+          const b = v.buffered
+          w.live(); if (v.paused) v.play().catch(() => {})
+          if (b.length && b.end(b.length - 1) - v.currentTime > 1.5) v.currentTime = Math.max(b.start(b.length - 1), b.end(b.length - 1) - 0.4) // stay near live
+          if (b.length && v.currentTime - b.start(0) > 20 && !w.sb.updating) { try { w.sb.remove(b.start(0), v.currentTime - 5) } catch {} return }
+          pump()
+        })
+        pump()
+      }, { once: true })
+      const pump = () => { if (w.sb && !w.sb.updating && w.q.length) try { w.sb.appendBuffer(w.q.shift()) } catch (e) { console.warn('phone relay', e.name, e.message, w.v.error?.message) } }
+      w.pump = pump
+      w.live = () => { // once frames flow, hand the studio a camera-like stream
+        if (w.stream || this.wcams[id] !== w || !v.videoWidth) return
+        try { w.stream = v.captureStream() } catch (e) { return console.warn('phone relay', e.message) }
+        this.camGen['wifi:' + id] = (this.camGen['wifi:' + id] || 0) + 1; this.onPhones?.(); this.sync()
+      }
+      v.addEventListener('playing', w.live)
+      v.play().catch(() => {})
+    }
+    w.last = Date.now(); w.q.push(data); w.pump?.()
+  }
+  async answerPhone({ id, name, sdp }) {
+    this.wcams[id]?.pc.close()
+    const pc = new RTCPeerConnection(), w = this.wcams[id] = { pc, name, stream: null }
+    const bump = () => { this.camGen['wifi:' + id] = (this.camGen['wifi:' + id] || 0) + 1; this.onPhones?.(); this.sync() }
+    pc.ontrack = e => { w.stream = e.streams[0] || new MediaStream([e.track]); bump() }
+    pc.onconnectionstatechange = () => { if (/failed|closed/.test(pc.connectionState) && this.wcams[id]?.pc === pc) { w.stream = null; this.onPhones?.() } else this.onPhones?.() }
+    await pc.setRemoteDescription({ type: 'offer', sdp })
+    await pc.setLocalDescription(await pc.createAnswer())
+    await new Promise(res => { if (pc.iceGatheringState === 'complete') return res(); pc.onicegatheringstatechange = () => pc.iceGatheringState === 'complete' && res(); setTimeout(res, 2500) })
+    api.send('wcam:answer', id, pc.localDescription.sdp)
+  }
+  phones() { return Object.entries(this.wcams).map(([id, w]) => ({ id, name: w.name, relay: !!w.sid, on: !!w.stream && (w.sid ? Date.now() - w.last < 4000 : w.pc?.connectionState === 'connected') })) }
   recs = {}
   res = {} // per-layer media resources
   geo = {} // per-layer drawn geometry (canvas px), for hit-testing
@@ -619,7 +673,7 @@ export class Engine {
     for (const l of all) {
       if (!(['webcam', 'screen', 'image', 'video', 'browser'].includes(l.type) || (l.type === 'banner' && l.src)) || keep.has(l.id)) continue
       keep.add(l.id)
-      const key = l.type + '|' + (l.src || '') + '|' + (l.res || '') + '|' + (l.capFps || '')
+      const key = l.type + '|' + (l.src || '') + '|' + (l.res || '') + '|' + (l.capFps || '') + '|' + (l.camRot || 0) + '|' + (this.camGen[l.src] || 0)
       if (this.res[l.id]?.key === key) continue
       this.res[l.id]?.stop?.()
       const r = this.res[l.id] = { key }
@@ -636,7 +690,19 @@ export class Engine {
       r.stop = () => stream.getTracks().forEach(t => t.stop())
       await v.play(); r.el = v
     }
-    if (l.type === 'webcam') {
+    if (l.type === 'webcam' && l.src.startsWith('wifi:')) { // a phone's camera over Wi-Fi (its browser, WebRTC)
+      const id = l.src.slice(5)
+      while (!this.wcams[id]?.stream) { if (this.res[l.id] !== r) return; await new Promise(t => setTimeout(t, 500)) }
+      await live(this.wcams[id].stream.clone())
+    } else if (l.type === 'webcam' && l.src.startsWith('droid:')) { // an Android phone's camera through scrcpy (USB or Wi-Fi adb)
+      const [, facing, ...rest] = l.src.split(':'), serial = rest.join(':'), cid = l.id + '-' + Date.now().toString(36)
+      const gen = new MediaStreamTrackGenerator({ kind: 'video' }), wr = gen.writable.getWriter()
+      const feed = new Feed(f => { if (wr.desiredSize > 0) wr.write(f).catch(() => {}); else f.close() })
+      this.acam[cid] = p => feed.push(p)
+      r.stop = () => { delete this.acam[cid]; api.invoke('acam:stop', cid).catch(() => {}); feed.clear(); try { gen.stop() } catch {} }
+      await api.invoke('acam:start', cid, serial, { facing, maxSize: { 720: 1280, 1080: 1920, 1440: 2560, 2160: 3840 }[l.res || '1080'], fps: l.capFps || 30, rot: l.camRot || 0 })
+      const v = document.createElement('video'); v.muted = true; v.srcObject = new MediaStream([gen]); await v.play(); r.el = v
+    } else if (l.type === 'webcam') {
       await api.invoke('media:ask', 'camera')
       const R = { '720': [1280, 720], '1080': [1920, 1080], '1440': [2560, 1440], '2160': [3840, 2160] }[l.res || '720']
       await live(await md.getUserMedia({ video: { deviceId: l.src === 'default' ? undefined : { exact: l.src }, width: { ideal: R[0] }, height: { ideal: R[1] }, frameRate: { ideal: l.capFps || 30 } } }))

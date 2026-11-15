@@ -11,12 +11,14 @@ import { BRAND } from '../shared/brand'
 import { Chat } from './chat'
 import { iosUsb, iosStart, iosStop, stopWatch, uxplayPath, installUxplay } from './ios'
 import { adb, listDevices, listApps, foreground, deviceInfo, overlayApps, cleanOn, cleanOff, perf, appInfo, appAction, screenshot, Session, FFMPEG, ADB } from './phone'
+import { setupPhoneCams } from './phonecam'
 
 const mac = process.platform === 'darwin'
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 app.commandLine.appendSwitch('disable-renderer-backgrounding')
 app.commandLine.appendSwitch('enable-experimental-web-platform-features') // FaceDetector for webcam face tracking
 app.commandLine.appendSwitch('disable-background-timer-throttling')
+app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns') // phone cameras over Wi-Fi: offer real LAN addresses
 
 // meroro://models/<file> serves downloaded speech models to the captions worker (stable URL, so the engine's own cache is reused)
 protocol.registerSchemesAsPrivileged([{ scheme: 'meroro', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }])
@@ -79,6 +81,7 @@ ipcMain.on('settings:set', (_, s) => {
 
 // ---- phone ----
 ipcMain.handle('devices', () => listDevices())
+setupPhoneCams(send)
 // ---- wireless adb: adb exits 0 even on failure, so the output text decides ----
 const hostPort = (a, port) => { a = a.trim().replace(/^adb\s+(connect|pair)\s+/, ''); return /:\d+$/.test(a) ? a : `${a}:${port}` }
 // macOS Local Network privacy: the adb server inherits the permission of whichever app started it.

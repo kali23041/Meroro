@@ -33,6 +33,11 @@ function Preview({ d, eng, thumb }) {
   useEffect(() => { // camera
     if (d.type !== 'webcam') return
     let st, on = true
+    if (/^(droid|wifi):/.test(d.src || '')) { // phone cameras: show the studio's own live feed
+      const E = eng?.current || eng || window.__eng
+      const t = setInterval(() => { const x = E?.res?.[d.id]?.el?.srcObject || (d.src.startsWith('wifi:') && E?.wcams?.[d.src.slice(5)]?.stream); if (x && v.current && v.current.srcObject !== x) v.current.srcObject = x }, 400)
+      return () => clearInterval(t)
+    }
     navigator.mediaDevices.getUserMedia({ video: d.src && d.src !== 'default' ? { deviceId: { exact: d.src } } : true })
       .then(x => { st = x; if (on && v.current) v.current.srcObject = x; else x.getTracks().forEach(t => t.stop()) }).catch(() => {})
     return () => { on = false; st?.getTracks().forEach(t => t.stop()) }
@@ -99,7 +104,11 @@ export function SourceFields({ d, up, inline, cams = [], maps = {}, app, front, 
           <Row label="Name"><Input autoFocus={!inline} value={d.name} onChange={e => up({ name: e.target.value })} /></Row>
           {d.type === 'ios' && <Row label="Connection"><Select className="flex-1" value={d.src} onChange={src => up({ src })}
             options={[...(iosList?.usb || []).map(x => ['usb:' + x.id, x.name + ' · USB']), ['airplay', 'AirPlay (wireless)'], ...(d.src?.startsWith('usb:') && !iosList?.usb.some(x => 'usb:' + x.id === d.src) ? [[d.src, d.name + ' · USB (not plugged in)']] : [])]} /></Row>}
-          {d.type === 'webcam' && <Row label="Camera"><Select className="flex-1" value={d.src || 'default'} onChange={src => up({ src })} options={[['default', 'System default'], ...cams]} /></Row>}
+          {d.type === 'webcam' && (d.src || '').startsWith('droid:') ? <>
+            <Row label="Camera"><Select className="flex-1" value={d.src.split(':')[1]} onChange={f => up({ src: 'droid:' + f + ':' + d.src.split(':').slice(2).join(':') })} options={[['back', 'Back camera'], ['front', 'Front camera'], ['external', 'External camera']]} /></Row>
+            <Row label="Rotate"><Select className="flex-1" value={String(d.camRot || 0)} onChange={r => up({ camRot: +r })} options={[['0', 'Landscape (phone on its side)'], ['90', '90°'], ['180', '180°'], ['270', '270°']]} /></Row>
+          </> : d.type === 'webcam' && (d.src || '').startsWith('wifi:') ? <Row label="Camera"><span className="flex-1 text-[11px] text-zinc-400">Phone over Wi-Fi. Flip cameras and quality on the phone.</span></Row>
+          : d.type === 'webcam' && <Row label="Camera"><Select className="flex-1" value={d.src || 'default'} onChange={src => up({ src })} options={[['default', 'System default'], ...cams]} /></Row>}
           {d.type === 'webcam' && <FaceControls l={d} up={up} />}
           {d.type === 'screen' && <Row label="Capture"><Select className="flex-1" value={d.src || ''} onChange={src => up({ src, name: shots.find(x => x.id === src)?.name || d.name })}
             options={[['', 'Choose screen or window…'], ...shots.map(x => [x.id, x.name]), ...(d.src && !shots.some(x => x.id === d.src) ? [[d.src, d.name]] : [])]} /></Row>}
@@ -127,7 +136,7 @@ export function SourceFields({ d, up, inline, cams = [], maps = {}, app, front, 
             <Row label="Capture fps"><Select className="flex-1" value={String(sx.capFps)} onChange={v => onCapture({ capFps: +v })} options={[[120, '120 fps'], [90, '90 fps'], [60, '60 fps'], [30, '30 fps']].map(([v, n]) => [String(v), n])} /></Row>
             <Row label="Capture bitrate"><Select className="flex-1" value={String(sx.capBitrate)} onChange={v => onCapture({ capBitrate: +v })} options={[[4, '4 Mbps'], [8, '8 Mbps'], [12, '12 Mbps'], [16, '16 Mbps'], [24, '24 Mbps'], [32, '32 Mbps'], [40, '40 Mbps']].map(([v, n]) => [String(v), n])} /></Row>
           </>}
-          {(d.type === 'webcam' || d.type === 'screen') && <>
+          {(d.type === 'webcam' && !(d.src || '').startsWith('wifi:') || d.type === 'screen') && <>
             <Row label={d.type === 'webcam' ? 'Camera quality' : 'Max resolution'}><Select className="flex-1" value={d.res || (d.type === 'webcam' ? '720' : '')} onChange={res => up({ res })}
               options={d.type === 'webcam' ? [['720', '720p'], ['1080', '1080p'], ['1440', '1440p / 2K'], ['2160', '4K']] : [['', 'Native (sharpest)'], ['2160', '4K'], ['1440', '1440p / 2K'], ['1080', '1080p']]} /></Row>
             <Row label="Frame rate"><Select className="flex-1" value={String(d.capFps || 30)} onChange={v => up({ capFps: +v })} options={[['30', '30 fps'], ['60', '60 fps']]} /></Row>

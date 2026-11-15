@@ -149,11 +149,14 @@ export class Session {
     const scid = randomInt(1, 0x7fffffff).toString(16).padStart(8, '0')
     this.port = await freePort()
     await adb(['-s', serial, 'forward', `tcp:${this.port}`, `localabstract:scrcpy_${scid}`])
-    const args = [`scid=${scid}`, 'log_level=info', 'tunnel_forward=true', 'send_device_meta=false', 'control=true',
+    const cam = !!o.camera // phone camera as a webcam (Android 12+): video only, no control socket
+    const args = cam ? [`scid=${scid}`, 'log_level=info', 'tunnel_forward=true', 'send_device_meta=false', 'control=false', 'audio=false', 'video_codec=h264',
+      'video_source=camera', `camera_facing=${o.camera}`, 'camera_ar=16:9', `max_size=${o.maxSize || 1920}`, `camera_fps=${o.fps || 30}`, `video_bit_rate=${(o.bitrate || 10) * 1e6}`,
+      ...(o.rot ? [`capture_orientation=${o.rot}`] : [])] : [`scid=${scid}`, 'log_level=info', 'tunnel_forward=true', 'send_device_meta=false', 'control=true',
       `audio=${!!o.audio}`, 'audio_codec=raw', ...(o.audio && o.dup ? ['audio_source=playback', 'audio_dup=true'] : []), // dup: keep sound on the phone too (Android 13+)
       'video_codec=h264', `max_size=${o.maxSize || 0}`,
       `video_bit_rate=${(o.bitrate || 8) * 1e6}`, `max_fps=${o.fps || 60}`, 'stay_awake=true']
-    if (o.virtual) args.push(`new_display=${o.display || ''}`, 'vd_destroy_content=false')
+    if (o.virtual && !cam) args.push(`new_display=${o.display || ''}`, 'vd_destroy_content=false')
     this.proc = spawn(ADB, await serverCmd(serial, args), { windowsHide: true })
     let log = ''
     const onLog = d => { log = (log + d).slice(-2000); for (const l of String(d).split('\n')) if (l.trim()) this.emit('log', l.trim()) }
@@ -170,6 +173,7 @@ export class Session {
     const video = reader(() => {}, p => this.emit('video', p), (w, h) => this.emit('size', { w, h }))
     first.s.on('data', video)
     if (first.rest.length) video(first.rest)
+    if (cam) return
     if (o.audio) {
       const a = await this.connect()
       a.s.on('data', reader(id => id < 2 && this.emit('log', 'Phone audio is unavailable (needs Android 11+)'), p => this.emit('audio', p.data)))

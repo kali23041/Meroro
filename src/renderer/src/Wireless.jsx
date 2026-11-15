@@ -1,13 +1,13 @@
 // Wireless debugging: discovered phones, pairing (Android 11+), manual connect, and USB → Wi-Fi.
-import { useEffect, useState } from 'react'
-import { Wifi, Link2, KeyRound, Check, AlertTriangle, Loader2 } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Wifi, Link2, KeyRound, Check, AlertTriangle, Loader2, QrCode, RefreshCw } from 'lucide-react'
 import { Button, Input, Segmented, cx } from './ui'
 
 const api = window.api
 const clean = e => String(e?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
 
 export default function Wireless({ serial, usbReady, compact }) {
-  const [tab, setTab] = useState('connect'), [addr, setAddr] = useState(''), [pairAddr, setPairAddr] = useState(''), [code, setCode] = useState('')
+  const [tab, setTab] = useState(usbReady ? 'connect' : 'qr'), [addr, setAddr] = useState(''), [pairAddr, setPairAddr] = useState(''), [code, setCode] = useState('')
   const [st, setSt] = useState(null), [found, setFound] = useState([])
   useEffect(() => {
     let on = true
@@ -32,8 +32,8 @@ export default function Wireless({ serial, usbReady, compact }) {
           <Button className="h-6 px-2" disabled={st?.busy} onClick={() => run('adb:connect', f.addr)}>Connect</Button>
         </div>
       ))}
-      <Segmented value={tab} onChange={setTab} options={[['connect', 'Connect', Link2], ['pair', 'Pair new', KeyRound]]} />
-      {tab === 'connect' ? <div className="flex gap-1.5">
+      <Segmented value={tab} onChange={setTab} options={[['qr', 'QR code', QrCode], ['pair', 'Pair code', KeyRound], ['connect', 'Connect', Link2]]} />
+      {tab === 'qr' ? <QrPair /> : tab === 'connect' ? <div className="flex gap-1.5">
         <Input value={addr} onChange={e => setAddr(e.target.value)} onKeyDown={e => e.key === 'Enter' && addr && run('adb:connect', addr)} placeholder="192.168.1.20:37415" />
         <Button disabled={!addr || st?.busy} onClick={() => run('adb:connect', addr)}>Connect</Button>
       </div> : <>
@@ -50,4 +50,34 @@ export default function Wireless({ serial, usbReady, compact }) {
       {st?.bad && /Local Network/.test(st.text) && <Button className="w-full" onClick={() => api.invoke('perm:open', 'network')}>Open Local Network settings</Button>}
     </div>
   )
+}
+
+// Pair with a QR code, like Android Studio: Wireless debugging → Pair device with QR code.
+export function QrPair() {
+  const [q, setQ] = useState(null), [st, setSt] = useState(null), cur = useRef('')
+  const make = async () => {
+    setSt(null); setQ(null)
+    try {
+      const r = await api.invoke('adb:qr'); cur.current = r.name; setQ(r)
+      const text = await api.invoke('adb:qr:wait', r.name)
+      if (cur.current === r.name) setSt({ ok: true, text })
+    } catch (e) { if (cur.current) setSt({ bad: true, text: clean(e) }) }
+  }
+  useEffect(() => { make(); return () => { cur.current = ''; api.invoke('adb:qr:cancel') } }, [])
+  return <div className="flex gap-3 items-start">
+    <div className="relative size-[132px] shrink-0 rounded-xl bg-white p-1.5">
+      {q ? <img src={q.img} className={cx('size-full', st?.ok && 'opacity-20')} draggable={false} /> : <Loader2 size={18} className="absolute inset-0 m-auto animate-spin text-zinc-400" />}
+      {st?.ok && <Check size={40} className="absolute inset-0 m-auto text-emerald-500" />}
+    </div>
+    <div className="min-w-0 flex-1 space-y-1.5 text-[11px] leading-snug text-zinc-400">
+      <ol className="list-decimal pl-4 space-y-0.5">
+        <li>Phone and computer on the same Wi-Fi.</li>
+        <li>On the phone: <b className="text-zinc-200">Developer options → Wireless debugging → Pair device with QR code</b>.</li>
+        <li>Scan this code. Meroro pairs and connects by itself.</li>
+      </ol>
+      {!st ? q && <div className="flex items-center gap-1.5 text-zinc-300"><Loader2 size={11} className="animate-spin" />Waiting for the phone…</div>
+        : <div className={cx('flex gap-1.5', st.bad ? 'text-red-400' : 'text-emerald-400')}>{st.bad ? <AlertTriangle size={12} className="shrink-0 mt-px" /> : <Check size={12} className="shrink-0 mt-px" />}<span>{st.text}</span></div>}
+      <button onClick={make} className="flex items-center gap-1 text-zinc-300 hover:text-white"><RefreshCw size={11} />New code</button>
+    </div>
+  </div>
 }

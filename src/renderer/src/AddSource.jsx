@@ -1,14 +1,16 @@
 // "Add source" window: pick a kind of source, then (for screens, windows, cameras) pick exactly which one.
 import { useEffect, useState } from 'react'
-import { Mic, Volume2, Play, Captions, PanelBottom, Target, EyeOff, Layers, TabletSmartphone, Usb, Cast, Download, Loader2, Smartphone, Webcam, Monitor, AppWindow, Image as ImageIcon, Film, Globe, MessageSquare, BellRing, Type, Clock, Palette, X, ChevronLeft, RefreshCw } from 'lucide-react'
+import { Mic, Volume2, Play, Captions, PanelBottom, Target, EyeOff, Layers, TabletSmartphone, Usb, Cast, Download, Loader2, Smartphone, Webcam, Monitor, AppWindow, Image as ImageIcon, Film, Globe, MessageSquare, BellRing, Type, Clock, Palette, X, ChevronLeft, RefreshCw, Camera, Aperture, Wifi } from 'lucide-react'
 import { Button, Input, Tabs, cx } from './ui'
 import { newLayer } from './scene'
 import { AppIcon } from './Library'
 import { SFX } from './sfx'
+import Wireless from './Wireless'
 
 const api = window.api
 const KINDS = [
-  ['phone', 'Android', 'Android phone · USB or Wi-Fi', Smartphone], ['ios', 'iPhone / iPad', 'USB (Mac) or AirPlay', TabletSmartphone], ['screen', 'Screen', 'A whole display', Monitor], ['window', 'Window', 'One app window', AppWindow],
+  ['phone', 'Android', 'Android phone · USB or Wi-Fi', Smartphone], ['ios', 'iPhone / iPad', 'USB (Mac) or AirPlay', TabletSmartphone],
+  ['droidcam', 'Android camera', 'Phone as webcam · USB or Wi-Fi', Camera], ['icam', 'iPhone camera', 'Phone as webcam · wireless', Aperture], ['screen', 'Screen', 'A whole display', Monitor], ['window', 'Window', 'One app window', AppWindow],
   ['mic', 'Microphone', 'Voice input · voice changer', Mic], ['webcam', 'Webcam', 'Camera / facecam', Webcam], ['sound', 'Sound effect', 'Whoosh, coin, ding…', Volume2], ['image', 'Image', 'PNG, JPG, GIF', ImageIcon], ['video', 'Video file', 'MP4, MOV, WebM', Film],
   ['browser', 'Web page', 'Alerts, widgets', Globe], ['chat', 'YouTube chat', 'Live chat box', MessageSquare], ['alert', 'Alert box', 'Super Chat pop-up', BellRing],
   ['text', 'Text', 'Title or label', Type], ['clock', 'Clock', 'Live time', Clock], ['color', 'Color', 'Solid or gradient', Palette],
@@ -24,12 +26,12 @@ export default function AddSource({ only, cams, onPick, onClose, front, meta, on
   useEffect(() => { if (kind === 'screen' || kind === 'window') { setTab(kind); load() } }, [kind])
   const add = (type, o) => { onPick({ ...newLayer(type), ...o }); onClose() }
   const choose = async k => {
-    if (k === 'screen' || k === 'window' || k === 'ios' || k === 'mic' || k === 'sound') return setKind(k)
+    if (['screen', 'window', 'ios', 'mic', 'sound', 'droidcam', 'icam'].includes(k)) return setKind(k)
     if (k === 'image' || k === 'video') { const src = await api.invoke('file:pick', k); return src && add(k, { src, name: src.split(/[\\/]/).pop() }) }
     add(k)
   }
   const list = (shots || []).filter(x => x.id.startsWith(tab))
-  const title = kind === 'mic' ? 'Add a microphone' : kind === 'sound' ? 'Add a sound effect' : !kind ? 'Add source' : only ? 'Choose a screen or window for the backdrop' : kind === 'ios' ? 'Add an iPhone or iPad' : kind === 'webcam' ? 'Choose a camera' : kind === 'browser' ? 'Web page' : 'Choose what to capture'
+  const title = kind === 'mic' ? 'Add a microphone' : kind === 'sound' ? 'Add a sound effect' : !kind ? 'Add source' : only ? 'Choose a screen or window for the backdrop' : kind === 'ios' ? 'Add an iPhone or iPad' : kind === 'webcam' ? 'Choose a camera' : kind === 'droidcam' ? 'Use an Android phone as a webcam' : kind === 'icam' ? 'Use an iPhone as a webcam' : kind === 'browser' ? 'Web page' : 'Choose what to capture'
 
   return (
     <div className="absolute inset-0 z-50 grid place-items-center bg-black/50 backdrop-blur-md" onPointerDown={e => e.target === e.currentTarget && onClose()}>
@@ -112,6 +114,17 @@ export default function AddSource({ only, cams, onPick, onClose, front, meta, on
               </button>
             ))}
           </div>}
+          {kind === 'droidcam' && <DroidCam add={add} />}
+          {kind === 'icam' && <div className="space-y-4">
+            <div>
+              <H icon={Aperture}>Continuity Camera {api.platform === 'darwin' ? '· wireless, built into macOS' : '(Mac only)'}</H>
+              {api.platform !== 'darwin' ? <Note>On Windows, use the Wi-Fi option below. It works with any iPhone.</Note>
+                : cams.filter(([, n]) => /iphone|ipad|continuity/i.test(n)).length ? <div className="grid grid-cols-2 gap-2">{cams.filter(([, n]) => /iphone|ipad|continuity/i.test(n)).map(([id, n]) => (
+                  <Pick key={id} icon={Aperture} title={n} sub="Continuity Camera · sharp, low delay" onClick={() => add('webcam', { src: id, fit: 'cover', res: '1080', name: n })} />))}</div>
+                : <Note>No iPhone camera yet. Bring an iPhone (iOS 16+) signed in to the same Apple ID near this Mac, with Wi-Fi and Bluetooth on. Lock it and stand it up in landscape: it shows up here by itself.</Note>}
+            </div>
+            <WifiCam add={add} />
+          </div>}
           {kind === 'browser' && <div className="flex gap-2">
             <Input autoFocus className="h-9" value={url} onChange={e => setUrl(e.target.value)} placeholder="https://… (alerts, chat overlay, any widget)" onKeyDown={e => e.key === 'Enter' && url && add('browser', { src: url.trim() })} />
             <Button variant="primary" className="h-9 px-4" disabled={!url} onClick={() => add('browser', { src: url.trim() })}>Add</Button>
@@ -120,4 +133,65 @@ export default function AddSource({ only, cams, onPick, onClose, front, meta, on
       </div>
     </div>
   )
+}
+
+const H = ({ icon: I, children }) => <div className="mb-2 flex items-center gap-1.5 text-[12px] font-semibold text-white"><I size={13} />{children}</div>
+const Note = ({ children }) => <div className="rounded-xl bg-white/[0.04] p-3 text-[12px] leading-relaxed text-zinc-400">{children}</div>
+const Pick = ({ icon: I, title, sub, onClick, right }) => <div className="flex items-center gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.04] p-3 text-left">
+  <span className="size-9 shrink-0 rounded-xl bg-white/[0.08] grid place-items-center"><I size={17} /></span>
+  <span className="flex-1 min-w-0"><span className="block truncate text-[13px] font-medium text-white">{title}</span><span className="block text-[11px] text-zinc-500">{sub}</span></span>
+  {right || <Button variant="primary" className="h-8 px-3" onClick={onClick}>Add</Button>}
+</div>
+
+// Android camera through USB debugging (cable or Wi-Fi): back/front camera, sharp and low delay. Android 12+.
+function DroidCam({ add }) {
+  const [devs, setDevs] = useState(null)
+  useEffect(() => { const f = () => api.invoke('devices').then(d => setDevs(d.filter(x => x.state === 'device'))).catch(() => setDevs([])); f(); const t = setInterval(f, 2000); return () => clearInterval(t) }, [])
+  const cam = (d, facing) => add('webcam', { src: `droid:${facing}:${d.serial}`, fit: 'cover', res: '1080', name: `${d.model} · ${facing} camera` })
+  return <div className="space-y-4">
+    <div>
+      <H icon={Usb}>USB debugging · cable or wireless</H>
+      {!devs ? <Note>Looking…</Note> : !devs.length ? <Note>No phone connected. Plug it in with USB debugging on, or pair it over Wi-Fi with the QR code below.</Note>
+        : <div className="space-y-2">{devs.map(d => <Pick key={d.serial} icon={d.wifi ? Wifi : Usb} title={d.model} sub={(d.wifi ? 'Wi-Fi' : 'USB') + ' · Android 12 or newer'}
+          right={<span className="flex gap-1.5"><Button className="h-8 px-3" onClick={() => cam(d, 'back')}><Camera size={13} />Back</Button><Button className="h-8 px-3" onClick={() => cam(d, 'front')}><Camera size={13} />Front</Button></span>} />)}</div>}
+    </div>
+    <div>
+      <H icon={Wifi}>Connect a phone over Wi-Fi</H>
+      <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3"><Wireless compact /></div>
+    </div>
+    <WifiCam add={add} />
+  </div>
+}
+
+// Any phone, no USB debugging: open a page from a QR code and the phone's browser sends its camera over Wi-Fi (WebRTC).
+function WifiCam({ add }) {
+  const [info, setInfo] = useState(null), [ph, setPh] = useState([]), [ip, setIp] = useState(0), [img, setImg] = useState('')
+  useEffect(() => {
+    api.invoke('wcam:info').then(setInfo).catch(e => setInfo({ err: String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') }))
+    const f = () => setPh(window.__eng?.phones() || []); f(); const t = setInterval(f, 1000); return () => clearInterval(t)
+  }, [])
+  useEffect(() => { if (info?.urls?.[ip]) api.invoke('wcam:qr', info.urls[ip]).then(setImg) }, [info, ip])
+  return <div>
+    <H icon={Wifi}>Any phone over Wi-Fi · no app, no cable</H>
+    {info?.err ? <Note>{info.err}</Note> : info && !info.urls.length ? <Note>This computer is not on a network. Connect it to the same Wi-Fi as the phone.</Note> : <div className="flex gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3">
+      <div className="relative size-[150px] shrink-0 rounded-xl bg-white p-1.5">{img ? <img src={img} className="size-full" draggable={false} /> : <Loader2 size={18} className="absolute inset-0 m-auto animate-spin text-zinc-400" />}</div>
+      <div className="min-w-0 flex-1 space-y-1.5 text-[11.5px] leading-snug text-zinc-400">
+        <ol className="list-decimal pl-4 space-y-0.5">
+          <li>Phone on the same Wi-Fi as this computer.</li>
+          <li>Scan the code with the phone's camera.</li>
+          <li>Tap <b className="text-zinc-200">Start camera</b> and allow the camera. Flip cameras and pick 720p, 1080p or 4K on the phone.</li>
+        </ol>
+        {info?.urls?.length > 1 && <div className="flex flex-wrap gap-1">{info.ips.map((x, i) => <button key={x} onClick={() => setIp(i)} className={cx('h-6 rounded-full px-2 text-[10.5px]', i === ip ? 'bg-white text-black' : 'bg-white/[0.08] text-zinc-300')}>{x}</button>)}</div>}
+        {info?.urls?.[ip] && <div className="truncate font-mono text-[10.5px] text-zinc-500 select-text">{info.urls[ip]}</div>}
+        {info && !info.trusted && <div className="text-amber-300/90">Couldn't get the secure link (no internet?). The phone will warn that the page isn't private, and iPhone may block the camera.</div>}
+        {info?.trusted && <details className="text-zinc-500"><summary className="cursor-pointer hover:text-zinc-300">Link doesn't open?</summary>
+          Some routers block this kind of address. Use the backup link instead (the phone warns that it isn't private; tap Show Details → visit this website, or Advanced → Proceed):
+          <button onClick={() => api.invoke('wcam:qr', info.backups[ip]).then(setImg)} className="ml-1 text-zinc-200 underline">show backup QR</button>
+          <div className="truncate font-mono text-[10.5px] select-text">{info.backups[ip]}</div></details>}
+        <div className="text-zinc-500">The phone connects directly, or falls back to a Wi-Fi relay if the network blocks that. On Mac, allow Meroro in System Settings → Privacy & Security → Local Network.</div>
+      </div>
+    </div>}
+    {!!ph.length && <div className="mt-2 space-y-2">{ph.map(p => <Pick key={p.id} icon={Camera} title={p.name} sub={p.on ? (p.relay ? 'Connected · Wi-Fi relay' : 'Connected over Wi-Fi') : 'Connecting…'} onClick={() => add('webcam', { src: 'wifi:' + p.id, fit: 'cover', name: p.name })} />)}</div>}
+    {!ph.length && info?.urls?.length > 0 && <div className="mt-2 flex items-center gap-1.5 text-[11px] text-zinc-500"><Loader2 size={11} className="animate-spin" />Phones that open the page show up here.</div>}
+  </div>
 }
