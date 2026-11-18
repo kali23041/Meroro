@@ -8,7 +8,8 @@
 Mirror your Android phone or iPhone, play with keyboard and mouse, build animated scenes and go live on 14 platforms at once, from one app.
 
 <p>
-  <img src="https://img.shields.io/badge/version-1.12.0-48484d?style=for-the-badge" alt="Version 1.12.0" />
+  <img src="https://img.shields.io/badge/version-1.13.0-48484d?style=for-the-badge" alt="Version 1.13.0" />
+  <img src="https://img.shields.io/badge/license-MIT-48484d?style=for-the-badge" alt="MIT License" />
   <img src="https://img.shields.io/badge/macOS-000000?style=for-the-badge&logo=apple&logoColor=white" alt="macOS" />
   <img src="https://img.shields.io/badge/Windows-0078D4?style=for-the-badge&logo=windows11&logoColor=white" alt="Windows" />
   <img src="https://img.shields.io/badge/Android-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android" />
@@ -389,6 +390,14 @@ No. Meroro saves the previous settings and puts them back when you turn Clean sc
 - Noise suppression uses [RNNoise](https://github.com/xiph/rnnoise) through [web-noise-suppressor](https://github.com/sapphi-red/web-noise-suppressor).
 - FFmpeg comes from [ffmpeg-static](https://github.com/eugeneware/ffmpeg-static). ADB comes from the Android SDK Platform-Tools.
 - Game posters are fetched at runtime from public sources and are not bundled. Game names, YouTube, Twitch and the other platforms, iPhone and AirPlay are trademarks of their owners. Meroro is an independent project and is not affiliated with them.
+
+## 📄 License
+
+Meroro is released under the [MIT License](LICENSE). Third-party components listed in Credits keep their own licenses.
+
+## 📬 Contact
+
+**Kartik Sabale** · [kartiksabale.com](https://kartiksabale.com) · [hello@kartiksabale.com](mailto:hello@kartiksabale.com)
 
 ---
 
